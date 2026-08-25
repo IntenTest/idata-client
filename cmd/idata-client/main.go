@@ -31,6 +31,18 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	if shouldPromptForConfig(fileConfig) {
+		config, configured, err := promptForConfig(fileConfig)
+		if err != nil {
+			return err
+		}
+		if configured {
+			if err := saveFileConfig(config); err != nil {
+				return err
+			}
+			fileConfig = config
+		}
+	}
 
 	hostname, _ := os.Hostname()
 	serverURL := flag.String("server", envOr("IDATA_SERVER_URL", fileConfig.ServerURL), "WebSocket server URL")
@@ -67,11 +79,10 @@ type clientFileConfig struct {
 }
 
 func loadFileConfig() (clientFileConfig, error) {
-	executable, err := os.Executable()
+	path, err := configFilePath()
 	if err != nil {
-		return clientFileConfig{}, fmt.Errorf("locate executable: %w", err)
+		return clientFileConfig{}, err
 	}
-	path := filepath.Join(filepath.Dir(executable), "idata-client.json")
 	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return clientFileConfig{}, nil
@@ -95,6 +106,40 @@ func loadFileConfig() (clientFileConfig, error) {
 		return clientFileConfig{}, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	return config, nil
+}
+
+func saveFileConfig(config clientFileConfig) error {
+	path, err := configFilePath()
+	if err != nil {
+		return err
+	}
+	contents, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode config: %w", err)
+	}
+	contents = append(contents, '\n')
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		return fmt.Errorf("write config %s: %w", path, err)
+	}
+	return nil
+}
+
+func configFilePath() (string, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locate executable: %w", err)
+	}
+	return filepath.Join(filepath.Dir(executable), "idata-client.json"), nil
+}
+
+func shouldPromptForConfig(config clientFileConfig) bool {
+	if len(os.Args) > 1 {
+		return false
+	}
+	if os.Getenv("IDATA_SERVER_URL") != "" && os.Getenv("IDATA_AGENT_TOKEN") != "" {
+		return false
+	}
+	return config.ServerURL == "" || config.AgentToken == ""
 }
 
 func validateServerURL(raw string, allowInsecure bool) error {

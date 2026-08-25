@@ -45,7 +45,11 @@ $env:IDATA_CLIENT_ID = 'office-windows'
 .\idata-client-windows-amd64.exe
 ```
 
-Windows 也可以把下面两个文件放在同一目录后，直接双击 EXE：
+Windows 首次双击 EXE 时，如果同目录没有 `idata-client.json` 且未设置必要环境变量，
+会弹出配置窗口。填写 server URL、agent token 和 client ID 后，程序会把配置保存到
+EXE 同目录的 `idata-client.json` 并继续启动。
+
+Windows 也可以提前把下面两个文件放在同一目录后，直接双击 EXE：
 
 ```text
 idata-client.exe
