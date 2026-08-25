@@ -14,9 +14,10 @@ import (
 	"github.com/gorilla/websocket"
 	"idata-client/internal/executor"
 	"idata-client/internal/protocol"
+	"idata-client/internal/terminal"
 )
 
-const Version = "0.1.0"
+const Version = "0.2.0"
 
 type Config struct {
 	ServerURL   string
@@ -108,6 +109,7 @@ func (a *Agent) connectAndServe(parent context.Context) error {
 		OS:              runtime.GOOS,
 		Arch:            runtime.GOARCH,
 		ClientVersion:   Version,
+		Capabilities:    []string{"terminal_v1"},
 	}
 	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	if err := conn.WriteJSON(hello); err != nil {
@@ -118,6 +120,30 @@ func (a *Agent) connectAndServe(parent context.Context) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	var writeMu sync.Mutex
+	terminals := terminal.NewManager(ctx, func(event terminal.Event) error {
+		message := protocol.Message{
+			ProtocolVersion: protocol.Version,
+			SessionID:       event.SessionID,
+			Stream:          event.Stream,
+			Data:            event.Data,
+			ExitCode:        event.ExitCode,
+			Error:           event.Error,
+		}
+		switch event.Type {
+		case "opened":
+			message.Type = protocol.TypeTerminalOpened
+			a.logger.Info("terminal session opened", "session_id", event.SessionID)
+		case "output":
+			message.Type = protocol.TypeTerminalOutput
+		case "closed":
+			message.Type = protocol.TypeTerminalClosed
+			a.logger.Info("terminal session closed", "session_id", event.SessionID, "exit_code", event.ExitCode)
+		default:
+			return fmt.Errorf("unknown terminal event %q", event.Type)
+		}
+		return writeJSON(conn, &writeMu, message)
+	})
+	defer terminals.CloseAll()
 	var commands sync.WaitGroup
 	semaphore := make(chan struct{}, 4)
 	defer commands.Wait()
@@ -128,7 +154,39 @@ func (a *Agent) connectAndServe(parent context.Context) error {
 			cancel()
 			return err
 		}
-		if message.Type != protocol.TypeCommand || message.ProtocolVersion != protocol.Version || message.RequestID == "" {
+		if message.ProtocolVersion != protocol.Version {
+			continue
+		}
+		switch message.Type {
+		case protocol.TypeTerminalOpen:
+			if err := terminals.Open(message.SessionID); err != nil {
+				result := protocol.Message{
+					Type: protocol.TypeTerminalClosed, ProtocolVersion: protocol.Version,
+					SessionID: message.SessionID, ExitCode: -1, Error: err.Error(),
+				}
+				if writeErr := writeJSON(conn, &writeMu, result); writeErr != nil {
+					cancel()
+					return writeErr
+				}
+			}
+			continue
+		case protocol.TypeTerminalInput:
+			if err := terminals.Input(message.SessionID, message.Data); err != nil {
+				a.logger.Warn("terminal input rejected", "session_id", message.SessionID, "error", err)
+			}
+			continue
+		case protocol.TypeTerminalResize:
+			// The first terminal implementation uses a persistent shell over pipes.
+			// Resize is reserved for a later PTY/ConPTY implementation.
+			continue
+		case protocol.TypeTerminalClose:
+			terminals.Close(message.SessionID)
+			continue
+		case protocol.TypeCommand:
+		default:
+			continue
+		}
+		if message.RequestID == "" {
 			continue
 		}
 		if message.TimeoutSeconds <= 0 || message.TimeoutSeconds > 24*60*60 || len(message.Command) > 32<<10 {

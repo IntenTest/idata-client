@@ -49,6 +49,11 @@ Windows 首次双击 EXE 时，如果同目录没有 `idata-client.json` 且未�
 会弹出配置窗口。填写 server URL、agent token 和 client ID 后，程序会把配置保存到
 EXE 同目录的 `idata-client.json` 并继续启动。
 
+连接新版 Server 后，Web 控制台会为当前页面创建一个持续 Shell。连续输入 `cd`、`set`
+等 shell 内建命令时状态会保留，stdout/stderr 会实时返回。页面关闭、切换设备或连接断开
+时，客户端会结束该 Shell 及其进程树。第一版使用持久管道 Shell，不支持 `vim`、`top`
+等依赖真实 PTY/ConPTY 的全屏程序，也不能可靠传递 Ctrl+C；这些能力需要后续终端后端升级。
+
 Windows 也可以提前把下面两个文件放在同一目录后，直接双击 EXE：
 
 ```text
