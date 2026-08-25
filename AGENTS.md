@@ -11,7 +11,8 @@
 
 ## 不变量
 
-- 客户端只建立出站连接，不监听本地网络端口。
+- 客户端到 Server 只建立出站连接。浏览器配对接口只能绑定数字 loopback 地址、校验精确
+  Server Origin，并可通过配置关闭；不得监听局域网或公网地址。
 - token 不可出现在日志、进程参数示例或错误详情里；推荐仅通过环境变量注入。
 - macOS 使用 `/bin/sh -c`，Windows 使用 `cmd.exe /D /S /C`；平台差异要有测试。
 - 每条命令都必须有超时和输出上限；取消连接不应留下可控范围内的孤儿进程。
@@ -28,4 +29,3 @@ go vet ./...
 GOOS=windows GOARCH=amd64 go build ./cmd/idata-client
 GOOS=darwin GOARCH=arm64 go build ./cmd/idata-client
 ```
-

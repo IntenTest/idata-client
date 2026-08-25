@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -13,11 +15,15 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"syscall"
 
 	"idata-client/internal/agent"
+	"idata-client/internal/browserbridge"
 )
+
+const defaultBrowserBridgeAddress = "127.0.0.1:17891"
 
 func main() {
 	if err := run(); err != nil {
@@ -31,6 +37,17 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	deviceTokenFromEnvironment := os.Getenv("IDATA_DEVICE_TOKEN")
+	deviceTokenGenerated := false
+	if deviceTokenFromEnvironment != "" && fileConfig.DeviceToken == "" {
+		fileConfig.DeviceToken = deviceTokenFromEnvironment
+	} else if fileConfig.DeviceToken == "" {
+		fileConfig.DeviceToken, err = newDeviceToken()
+		if err != nil {
+			return err
+		}
+		deviceTokenGenerated = true
+	}
 	if shouldPromptForConfig(fileConfig) {
 		config, configured, err := promptForConfig(fileConfig)
 		if err != nil {
@@ -41,6 +58,12 @@ func run() error {
 				return err
 			}
 			fileConfig = config
+			deviceTokenGenerated = false
+		}
+	}
+	if deviceTokenGenerated {
+		if err := saveFileConfig(fileConfig); err != nil {
+			return fmt.Errorf("persist generated device token: %w", err)
 		}
 	}
 
@@ -49,17 +72,20 @@ func run() error {
 	clientID := flag.String("id", envOr("IDATA_CLIENT_ID", valueOr(fileConfig.ClientID, hostname)), "stable client ID")
 	outputLimit := flag.Int64("output-limit", envInt64("IDATA_OUTPUT_LIMIT", positiveOr(fileConfig.OutputLimit, 1<<20)), "maximum bytes captured per output stream")
 	allowInsecure := flag.Bool("allow-insecure", envBool("IDATA_ALLOW_INSECURE", boolOr(fileConfig.AllowInsecure, true)), "allow unencrypted ws:// outside localhost")
+	browserBridgeAddress := flag.String("browser-bridge", envOr("IDATA_BROWSER_BRIDGE_ADDR", valueOr(fileConfig.BrowserBridgeAddress, defaultBrowserBridgeAddress)), "loopback browser pairing address, or off")
 	flag.Parse()
 
 	if err := validateServerURL(*serverURL, *allowInsecure); err != nil {
 		return err
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	deviceToken := envOr("IDATA_DEVICE_TOKEN", fileConfig.DeviceToken)
 	app, err := agent.New(agent.Config{
 		ServerURL:   *serverURL,
 		AgentToken:  envOr("IDATA_AGENT_TOKEN", fileConfig.AgentToken),
 		ClientID:    *clientID,
 		Hostname:    hostname,
+		DeviceToken: deviceToken,
 		OutputLimit: *outputLimit,
 	}, logger)
 	if err != nil {
@@ -67,15 +93,46 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if runtime.GOOS == "windows" && *browserBridgeAddress != "off" {
+		webOrigin, err := webOriginFromServerURL(*serverURL)
+		if err != nil {
+			return err
+		}
+		bridge, err := browserbridge.New(browserbridge.Config{
+			Address:       *browserBridgeAddress,
+			AllowedOrigin: webOrigin,
+			ClientID:      *clientID,
+			DeviceToken:   deviceToken,
+		})
+		if err != nil {
+			return err
+		}
+		go func() {
+			if err := bridge.Run(ctx); err != nil && ctx.Err() == nil {
+				logger.Warn("browser pairing bridge stopped", "error", err)
+			}
+		}()
+		logger.Info("browser pairing enabled", "address", *browserBridgeAddress, "origin", webOrigin)
+	}
 	return app.Run(ctx)
 }
 
 type clientFileConfig struct {
-	ServerURL     string `json:"server_url"`
-	AgentToken    string `json:"agent_token"`
-	ClientID      string `json:"client_id,omitempty"`
-	OutputLimit   int64  `json:"output_limit,omitempty"`
-	AllowInsecure *bool  `json:"allow_insecure,omitempty"`
+	ServerURL            string `json:"server_url"`
+	AgentToken           string `json:"agent_token"`
+	ClientID             string `json:"client_id,omitempty"`
+	DeviceToken          string `json:"device_token,omitempty"`
+	OutputLimit          int64  `json:"output_limit,omitempty"`
+	AllowInsecure        *bool  `json:"allow_insecure,omitempty"`
+	BrowserBridgeAddress string `json:"browser_bridge_address,omitempty"`
+}
+
+func newDeviceToken() (string, error) {
+	buffer := make([]byte, 32)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", fmt.Errorf("generate device token: %w", err)
+	}
+	return hex.EncodeToString(buffer), nil
 }
 
 func loadFileConfig() (clientFileConfig, error) {
@@ -154,6 +211,26 @@ func validateServerURL(raw string, allowInsecure bool) error {
 		return errors.New("unencrypted ws:// is only allowed for localhost; use wss:// or explicitly set --allow-insecure")
 	}
 	return nil
+}
+
+func webOriginFromServerURL(raw string) (string, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" {
+		return "", errors.New("cannot derive web origin from server URL")
+	}
+	switch parsed.Scheme {
+	case "ws":
+		parsed.Scheme = "http"
+	case "wss":
+		parsed.Scheme = "https"
+	default:
+		return "", errors.New("cannot derive web origin from non-WebSocket URL")
+	}
+	parsed.Path = ""
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String(), nil
 }
 
 func isLoopbackHost(host string) bool {

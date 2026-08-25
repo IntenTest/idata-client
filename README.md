@@ -24,8 +24,10 @@ GOOS=windows GOARCH=amd64 go build -o bin/idata-client-windows-amd64.exe ./cmd/i
 | `IDATA_SERVER_URL` | 是 | 无 | 端口 80 服务端地址，如 `ws://10.0.0.2/ws/agent` |
 | `IDATA_AGENT_TOKEN` | 是 | 无 | 客户端连接凭据 |
 | `IDATA_CLIENT_ID` | 否 | 当前 hostname | 稳定且唯一的设备 ID |
+| `IDATA_DEVICE_TOKEN` | 否 | 自动生成 | 每台设备唯一的 Web 配对凭据，至少 32 字符 |
 | `IDATA_OUTPUT_LIMIT` | 否 | `1048576` | stdout 和 stderr 各自的最大字节数 |
 | `IDATA_ALLOW_INSECURE` | 否 | `true` | 是否允许对非本机地址使用明文 `ws://` |
+| `IDATA_BROWSER_BRIDGE_ADDR` | 否 | `127.0.0.1:17891` | 浏览器配对回环地址；设为 `off` 可关闭 |
 
 macOS/Linux shell：
 
@@ -47,10 +49,13 @@ $env:IDATA_CLIENT_ID = 'office-windows'
 
 Windows 首次双击 EXE 时，如果同目录没有 `idata-client.json` 且未设置必要环境变量，
 会弹出配置窗口。填写 server URL、agent token 和 client ID 后，程序会把配置保存到
-EXE 同目录的 `idata-client.json` 并继续启动。
+EXE 同目录的 `idata-client.json` 并继续启动。新版 Client 会为每台设备生成不同的
+`device_token`；配置窗口可直接复制它。已有配置缺少此字段时也会自动补充并保存。
 
-连接新版 Server 后，从这台 Windows PC 打开 Server 根地址，Web 控制台会按直连源 IP
-自动识别并只连接当前 PC，然后创建一个持续 Shell。连续输入 `cd`、`set` 等 shell 内建
+连接新版 Server 后，从这台 Windows PC 打开 Server 根地址。页面会优先通过
+`http://127.0.0.1:17891` 向本机 Client 配对；若浏览器显示本地网络权限提示，请允许。
+浏览器策略阻止自动配对时，输入本机 `idata-client.json` 中的 `device_token` 即可。配对后
+页面只连接当前 PC，然后创建一个持续 Shell。连续输入 `cd`、`set` 等 shell 内建
 命令时状态会保留，stdout/stderr 会实时返回。页面关闭或连接断开时，客户端会结束该 Shell
 及其进程树。第一版使用持久管道 Shell，不支持 `vim`、`top` 等依赖真实 PTY/ConPTY 的
 全屏程序，也不能可靠传递 Ctrl+C；这些能力需要后续终端后端升级。
@@ -75,8 +80,9 @@ idata-client.json
 - 当前 `ws://` 端口 80 方案没有传输加密，只适合受信任内网。
 - client ID 不是密钥；真正的认证凭据是 agent token。
 - 当前静态 token 对所有客户端共享。大规模部署下一步应升级为每设备凭据或 mTLS。
-- Web 自助识别以浏览器和 Client 直连 Server 时的源 IP 为边界；共享 NAT、反向代理和同机
-  多用户场景不具备独立设备身份保证。
+- Web 设备身份使用每设备独立 token，不依赖源 IP，共享 NAT 或反向代理不会合并设备。
+- 浏览器配对 HTTP 接口只绑定 `127.0.0.1`，只允许配置的 Server Origin 读取，并可关闭。
+- `device_token` 是可控制本机终端的 Bearer 凭据；不要在不同 Client 之间复用或对外发送。
 - `idata-client.json` 中的 token 是明文凭据，应限制该文件仅授权管理员和运行账户可读，
   不要提交到版本库或通过不安全渠道传输。
 - 卸载只需停止托管服务、删除可执行文件和相应环境配置；本程序不会自行注册持久化。

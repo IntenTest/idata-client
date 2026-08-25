@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,13 +18,14 @@ import (
 	"idata-client/internal/terminal"
 )
 
-const Version = "0.2.1"
+const Version = "0.3.0"
 
 type Config struct {
 	ServerURL   string
 	AgentToken  string
 	ClientID    string
 	Hostname    string
+	DeviceToken string
 	OutputLimit int64
 }
 
@@ -41,6 +43,9 @@ func New(config Config, logger *slog.Logger) (*Agent, error) {
 	}
 	if config.ClientID == "" {
 		return nil, errors.New("client ID is required")
+	}
+	if len(config.DeviceToken) < 32 || len(config.DeviceToken) > 256 {
+		return nil, errors.New("device token must be between 32 and 256 characters")
 	}
 	if config.OutputLimit <= 0 {
 		return nil, errors.New("output limit must be positive")
@@ -109,6 +114,7 @@ func (a *Agent) connectAndServe(parent context.Context) error {
 		OS:              runtime.GOOS,
 		Arch:            runtime.GOARCH,
 		ClientVersion:   Version,
+		DeviceTokenHash: deviceTokenHash(a.config.DeviceToken),
 		Capabilities:    []string{"terminal_v1"},
 	}
 	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
@@ -231,6 +237,10 @@ func (a *Agent) connectAndServe(parent context.Context) error {
 			}
 		}(message)
 	}
+}
+
+func deviceTokenHash(token string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(token)))
 }
 
 func writeJSON(conn *websocket.Conn, mu *sync.Mutex, value any) error {

@@ -37,7 +37,7 @@ func TestLoadFileConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(filepath.Dir(executable), "idata-client.json")
-	contents := []byte(`{"server_url":"ws://127.0.0.1/ws/agent","agent_token":"test-token","client_id":"windows-test","output_limit":2048,"allow_insecure":false}`)
+	contents := []byte(`{"server_url":"ws://127.0.0.1/ws/agent","agent_token":"test-token","client_id":"windows-test","device_token":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","output_limit":2048,"allow_insecure":false,"browser_bridge_address":"127.0.0.1:19000"}`)
 	if err := os.WriteFile(configPath, contents, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -52,5 +52,38 @@ func TestLoadFileConfig(t *testing.T) {
 	}
 	if config.OutputLimit != 2048 || config.AllowInsecure == nil || *config.AllowInsecure {
 		t.Fatalf("unexpected optional config: %#v", config)
+	}
+	if config.DeviceToken == "" || config.BrowserBridgeAddress != "127.0.0.1:19000" {
+		t.Fatalf("unexpected device config: %#v", config)
+	}
+}
+
+func TestNewDeviceToken(t *testing.T) {
+	first, err := newDeviceToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := newDeviceToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 64 || len(second) != 64 || first == second {
+		t.Fatalf("generated tokens are not unique 256-bit hex values: %q %q", first, second)
+	}
+}
+
+func TestWebOriginFromServerURL(t *testing.T) {
+	tests := map[string]string{
+		"ws://10.0.0.2/ws/agent":         "http://10.0.0.2",
+		"wss://idata.example:8443/agent": "https://idata.example:8443",
+	}
+	for input, want := range tests {
+		got, err := webOriginFromServerURL(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Fatalf("webOriginFromServerURL(%q) = %q, want %q", input, got, want)
+		}
 	}
 }

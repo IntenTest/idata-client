@@ -25,6 +25,7 @@ type Message struct {
 	OS              string   `json:"os,omitempty"`
 	Arch            string   `json:"arch,omitempty"`
 	ClientVersion   string   `json:"client_version,omitempty"`
+	DeviceTokenHash string   `json:"device_token_hash,omitempty"`
 	Capabilities    []string `json:"capabilities,omitempty"`
 	Command         string   `json:"command,omitempty"`
 	TimeoutSeconds  int      `json:"timeout_seconds,omitempty"`

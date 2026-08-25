@@ -13,8 +13,10 @@ import (
 	"idata-client/internal/protocol"
 )
 
+const testDeviceToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
 func TestRunStopsWhenContextIsCanceled(t *testing.T) {
-	helloReceived := make(chan struct{})
+	helloReceived := make(chan protocol.Message, 1)
 	upgrader := websocket.Upgrader{}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		connection, err := upgrader.Upgrade(writer, request, nil)
@@ -22,10 +24,11 @@ func TestRunStopsWhenContextIsCanceled(t *testing.T) {
 			return
 		}
 		defer connection.Close()
-		if _, _, err := connection.ReadMessage(); err != nil {
+		var hello protocol.Message
+		if err := connection.ReadJSON(&hello); err != nil {
 			return
 		}
-		close(helloReceived)
+		helloReceived <- hello
 		_, _, _ = connection.ReadMessage()
 	}))
 	defer server.Close()
@@ -35,6 +38,7 @@ func TestRunStopsWhenContextIsCanceled(t *testing.T) {
 		AgentToken:  "test-token",
 		ClientID:    "test-client",
 		Hostname:    "test-host",
+		DeviceToken: testDeviceToken,
 		OutputLimit: 1024,
 	}, nil)
 	if err != nil {
@@ -46,7 +50,10 @@ func TestRunStopsWhenContextIsCanceled(t *testing.T) {
 	go func() { done <- application.Run(ctx) }()
 
 	select {
-	case <-helloReceived:
+	case hello := <-helloReceived:
+		if hello.DeviceTokenHash != deviceTokenHash(testDeviceToken) {
+			t.Fatalf("device token hash = %q, want %q", hello.DeviceTokenHash, deviceTokenHash(testDeviceToken))
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("client did not connect")
 	}
@@ -107,7 +114,7 @@ func TestInteractiveTerminalStreamsOutput(t *testing.T) {
 
 	application, err := New(Config{
 		ServerURL: "ws" + strings.TrimPrefix(server.URL, "http"), AgentToken: "test-token",
-		ClientID: "test-client", Hostname: "test-host", OutputLimit: 1024,
+		ClientID: "test-client", Hostname: "test-host", DeviceToken: testDeviceToken, OutputLimit: 1024,
 	}, nil)
 	if err != nil {
 		t.Fatal(err)

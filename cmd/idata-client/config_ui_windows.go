@@ -39,6 +39,9 @@ func promptForConfig(current clientFileConfig) (clientFileConfig, bool, error) {
 	if config.ServerURL == "" || config.AgentToken == "" {
 		return current, false, errors.New("server URL and agent token are required")
 	}
+	if len(config.DeviceToken) < 32 || len(config.DeviceToken) > 256 {
+		return current, false, errors.New("device token must be between 32 and 256 characters")
+	}
 	return config, true, nil
 }
 
@@ -59,7 +62,7 @@ $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
 $form.MinimizeBox = $false
-$form.ClientSize = New-Object System.Drawing.Size(520, 285)
+$form.ClientSize = New-Object System.Drawing.Size(620, 355)
 
 $font = New-Object System.Drawing.Font('Segoe UI', 9)
 $form.Font = $font
@@ -75,7 +78,7 @@ function Add-Label($text, $x, $y) {
 function Add-TextBox($x, $y, $text, $password) {
   $box = New-Object System.Windows.Forms.TextBox
   $box.Location = New-Object System.Drawing.Point($x, $y)
-  $box.Size = New-Object System.Drawing.Size(330, 24)
+  $box.Size = New-Object System.Drawing.Size(420, 24)
   $box.Text = [string]$text
   $box.UseSystemPasswordChar = $password
   $form.Controls.Add($box)
@@ -88,27 +91,41 @@ Add-Label 'Agent token' 24 72
 $token = Add-TextBox 155 69 $config.agent_token $true
 Add-Label 'Client ID' 24 116
 $client = Add-TextBox 155 113 $config.client_id $false
+Add-Label 'Device token' 24 160
+$device = Add-TextBox 155 157 $config.device_token $false
+$device.Size = New-Object System.Drawing.Size(330, 24)
+
+$copy = New-Object System.Windows.Forms.Button
+$copy.Text = 'Copy'
+$copy.Location = New-Object System.Drawing.Point(495, 156)
+$copy.Size = New-Object System.Drawing.Size(80, 27)
+$copy.Add_Click({
+  if (-not [string]::IsNullOrWhiteSpace($device.Text)) {
+    [System.Windows.Forms.Clipboard]::SetText($device.Text)
+  }
+})
+$form.Controls.Add($copy)
 
 $allow = New-Object System.Windows.Forms.CheckBox
 $allow.Text = 'Allow ws:// for non-local server'
-$allow.Location = New-Object System.Drawing.Point(155, 153)
+$allow.Location = New-Object System.Drawing.Point(155, 199)
 $allow.Size = New-Object System.Drawing.Size(260, 24)
 $allow.Checked = if ($null -eq $config.allow_insecure) { $true } else { [bool]$config.allow_insecure }
 $form.Controls.Add($allow)
 
 $status = New-Object System.Windows.Forms.Label
 $status.ForeColor = [System.Drawing.Color]::Firebrick
-$status.Location = New-Object System.Drawing.Point(24, 190)
-$status.Size = New-Object System.Drawing.Size(470, 24)
+$status.Location = New-Object System.Drawing.Point(24, 238)
+$status.Size = New-Object System.Drawing.Size(570, 40)
 $form.Controls.Add($status)
 
 $save = New-Object System.Windows.Forms.Button
 $save.Text = 'Save and start'
-$save.Location = New-Object System.Drawing.Point(260, 230)
+$save.Location = New-Object System.Drawing.Point(360, 300)
 $save.Size = New-Object System.Drawing.Size(115, 30)
 $save.Add_Click({
-  if ([string]::IsNullOrWhiteSpace($server.Text) -or [string]::IsNullOrWhiteSpace($token.Text)) {
-    $status.Text = 'Server URL and agent token are required.'
+  if ([string]::IsNullOrWhiteSpace($server.Text) -or [string]::IsNullOrWhiteSpace($token.Text) -or $device.Text.Trim().Length -lt 32 -or $device.Text.Trim().Length -gt 256) {
+    $status.Text = 'Server URL and agent token are required; device token must be 32-256 characters.'
     return
   }
   $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
@@ -118,7 +135,7 @@ $form.Controls.Add($save)
 
 $cancel = New-Object System.Windows.Forms.Button
 $cancel.Text = 'Cancel'
-$cancel.Location = New-Object System.Drawing.Point(390, 230)
+$cancel.Location = New-Object System.Drawing.Point(490, 300)
 $cancel.Size = New-Object System.Drawing.Size(85, 30)
 $cancel.Add_Click({
   $form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
@@ -138,7 +155,10 @@ $output = [pscustomobject]@{
   server_url = $server.Text.Trim()
   agent_token = $token.Text
   client_id = $client.Text.Trim()
+  device_token = $device.Text.Trim()
+  output_limit = [long]$config.output_limit
   allow_insecure = [bool]$allow.Checked
+  browser_bridge_address = [string]$config.browser_bridge_address
 }
 $output | ConvertTo-Json -Compress
 `
