@@ -49,10 +49,11 @@ Windows 首次双击 EXE 时，如果同目录没有 `idata-client.json` 且未�
 会弹出配置窗口。填写 server URL、agent token 和 client ID 后，程序会把配置保存到
 EXE 同目录的 `idata-client.json` 并继续启动。
 
-连接新版 Server 后，Web 控制台会为当前页面创建一个持续 Shell。连续输入 `cd`、`set`
-等 shell 内建命令时状态会保留，stdout/stderr 会实时返回。页面关闭、切换设备或连接断开
-时，客户端会结束该 Shell 及其进程树。第一版使用持久管道 Shell，不支持 `vim`、`top`
-等依赖真实 PTY/ConPTY 的全屏程序，也不能可靠传递 Ctrl+C；这些能力需要后续终端后端升级。
+连接新版 Server 后，从这台 Windows PC 打开 Server 根地址，Web 控制台会按直连源 IP
+自动识别并只连接当前 PC，然后创建一个持续 Shell。连续输入 `cd`、`set` 等 shell 内建
+命令时状态会保留，stdout/stderr 会实时返回。页面关闭或连接断开时，客户端会结束该 Shell
+及其进程树。第一版使用持久管道 Shell，不支持 `vim`、`top` 等依赖真实 PTY/ConPTY 的
+全屏程序，也不能可靠传递 Ctrl+C；这些能力需要后续终端后端升级。
 
 Windows 也可以提前把下面两个文件放在同一目录后，直接双击 EXE：
 
@@ -74,6 +75,8 @@ idata-client.json
 - 当前 `ws://` 端口 80 方案没有传输加密，只适合受信任内网。
 - client ID 不是密钥；真正的认证凭据是 agent token。
 - 当前静态 token 对所有客户端共享。大规模部署下一步应升级为每设备凭据或 mTLS。
+- Web 自助识别以浏览器和 Client 直连 Server 时的源 IP 为边界；共享 NAT、反向代理和同机
+  多用户场景不具备独立设备身份保证。
 - `idata-client.json` 中的 token 是明文凭据，应限制该文件仅授权管理员和运行账户可读，
   不要提交到版本库或通过不安全渠道传输。
 - 卸载只需停止托管服务、删除可执行文件和相应环境配置；本程序不会自行注册持久化。

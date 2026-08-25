@@ -17,7 +17,7 @@ import (
 	"idata-client/internal/terminal"
 )
 
-const Version = "0.2.0"
+const Version = "0.2.1"
 
 type Config struct {
 	ServerURL   string
