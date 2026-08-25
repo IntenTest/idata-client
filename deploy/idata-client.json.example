@@ -1,0 +1,6 @@
+{
+  "server_url": "ws://server-address/ws/agent",
+  "agent_token": "replace-with-client-connection-token",
+  "client_id": "office-windows",
+  "allow_insecure": true
+}
