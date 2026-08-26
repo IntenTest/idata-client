@@ -8,25 +8,32 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"net/netip"
+	"regexp"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"idata-client/internal/executor"
+	"idata-client/internal/pairingprompt"
 	"idata-client/internal/protocol"
 	"idata-client/internal/terminal"
 )
 
-const Version = "0.3.0"
+const Version = "0.4.0"
+
+var pairingChallengePattern = regexp.MustCompile(`^PAIR IDATA [A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$`)
 
 type Config struct {
-	ServerURL   string
-	AgentToken  string
-	ClientID    string
-	Hostname    string
-	DeviceToken string
-	OutputLimit int64
+	ServerURL       string
+	AgentToken      string
+	ClientID        string
+	Hostname        string
+	DeviceToken     string
+	OutputLimit     int64
+	PairingApprover func(context.Context, pairingprompt.Request) (bool, error)
 }
 
 type Agent struct {
@@ -106,6 +113,10 @@ func (a *Agent) connectAndServe(parent context.Context) error {
 	}()
 	defer close(connectionDone)
 
+	capabilities := []string{"terminal_v1"}
+	if a.config.PairingApprover != nil {
+		capabilities = append(capabilities, "browser_pairing_v1")
+	}
 	hello := protocol.Message{
 		Type:            protocol.TypeHello,
 		ProtocolVersion: protocol.Version,
@@ -115,7 +126,7 @@ func (a *Agent) connectAndServe(parent context.Context) error {
 		Arch:            runtime.GOARCH,
 		ClientVersion:   Version,
 		DeviceTokenHash: deviceTokenHash(a.config.DeviceToken),
-		Capabilities:    []string{"terminal_v1"},
+		Capabilities:    capabilities,
 	}
 	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	if err := conn.WriteJSON(hello); err != nil {
@@ -152,6 +163,7 @@ func (a *Agent) connectAndServe(parent context.Context) error {
 	defer terminals.CloseAll()
 	var commands sync.WaitGroup
 	semaphore := make(chan struct{}, 4)
+	pairingSemaphore := make(chan struct{}, 1)
 	defer commands.Wait()
 
 	for {
@@ -164,6 +176,9 @@ func (a *Agent) connectAndServe(parent context.Context) error {
 			continue
 		}
 		switch message.Type {
+		case protocol.TypePairingRequest:
+			a.handlePairingRequest(ctx, conn, &writeMu, &commands, pairingSemaphore, message)
+			continue
 		case protocol.TypeTerminalOpen:
 			if err := terminals.Open(message.SessionID); err != nil {
 				result := protocol.Message{
@@ -237,6 +252,82 @@ func (a *Agent) connectAndServe(parent context.Context) error {
 			}
 		}(message)
 	}
+}
+
+func (a *Agent) handlePairingRequest(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, workers *sync.WaitGroup, semaphore chan struct{}, message protocol.Message) {
+	if a.config.PairingApprover == nil || !validPairingRequest(message, time.Now()) {
+		_ = writePairingResult(conn, writeMu, message.PairingID, false, "unsupported_or_invalid")
+		return
+	}
+	select {
+	case semaphore <- struct{}{}:
+	case <-ctx.Done():
+		return
+	default:
+		_ = writePairingResult(conn, writeMu, message.PairingID, false, "busy")
+		return
+	}
+
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		defer func() { <-semaphore }()
+		expiresAt, _ := time.Parse(time.RFC3339, message.ExpiresAt)
+		promptCtx, cancel := context.WithDeadline(ctx, expiresAt)
+		defer cancel()
+		approved, err := a.config.PairingApprover(promptCtx, pairingprompt.Request{
+			Challenge: message.Challenge, BrowserIP: message.BrowserIP,
+			ServerHost: message.ServerHost, SessionTTL: message.SessionTTL,
+		})
+		reason := ""
+		if err != nil {
+			if errors.Is(promptCtx.Err(), context.DeadlineExceeded) {
+				reason = "expired"
+			} else {
+				reason = "prompt_failed"
+				a.logger.Warn("browser pairing prompt failed", "pairing_id", message.PairingID, "error", err)
+			}
+		} else if !approved {
+			reason = "denied"
+		}
+		if ctx.Err() == nil {
+			if err := writePairingResult(conn, writeMu, message.PairingID, approved && reason == "", reason); err != nil {
+				a.logger.Warn("failed to send browser pairing result", "pairing_id", message.PairingID, "error", err)
+			}
+		}
+	}()
+}
+
+func validPairingRequest(message protocol.Message, now time.Time) bool {
+	if len(message.PairingID) != 32 {
+		return false
+	}
+	for _, character := range message.PairingID {
+		if !strings.ContainsRune("0123456789abcdef", character) {
+			return false
+		}
+	}
+	if !pairingChallengePattern.MatchString(message.Challenge) {
+		return false
+	}
+	if _, err := netip.ParseAddr(message.BrowserIP); err != nil {
+		return false
+	}
+	if message.ServerHost == "" || len(message.ServerHost) > 255 || strings.ContainsAny(message.ServerHost, "\r\n") {
+		return false
+	}
+	expiresAt, err := time.Parse(time.RFC3339, message.ExpiresAt)
+	if err != nil || !expiresAt.After(now) || expiresAt.After(now.Add(10*time.Minute)) {
+		return false
+	}
+	return message.SessionTTL >= 60 && message.SessionTTL <= 24*60*60
+}
+
+func writePairingResult(conn *websocket.Conn, writeMu *sync.Mutex, pairingID string, approved bool, reason string) error {
+	return writeJSON(conn, writeMu, protocol.Message{
+		Type: protocol.TypePairingResult, ProtocolVersion: protocol.Version,
+		PairingID: pairingID, Approved: approved, Error: reason,
+	})
 }
 
 func deviceTokenHash(token string) string {

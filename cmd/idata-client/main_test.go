@@ -37,7 +37,7 @@ func TestLoadFileConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(filepath.Dir(executable), "idata-client.json")
-	contents := []byte(`{"server_url":"ws://127.0.0.1/ws/agent","agent_token":"test-token","client_id":"windows-test","device_token":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","output_limit":2048,"allow_insecure":false,"browser_bridge_address":"127.0.0.1:19000"}`)
+	contents := []byte(`{"server_url":"ws://127.0.0.1/ws/agent","agent_token":"test-token","client_id":"windows-test","device_token":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","output_limit":2048,"allow_insecure":false,"browser_bridge_address":"127.0.0.1:19000","confirm_browser_pairing":false}`)
 	if err := os.WriteFile(configPath, contents, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -55,6 +55,9 @@ func TestLoadFileConfig(t *testing.T) {
 	}
 	if config.DeviceToken == "" || config.BrowserBridgeAddress != "127.0.0.1:19000" {
 		t.Fatalf("unexpected device config: %#v", config)
+	}
+	if config.ConfirmBrowserPairing == nil || *config.ConfirmBrowserPairing {
+		t.Fatalf("unexpected browser pairing confirmation config: %#v", config)
 	}
 }
 

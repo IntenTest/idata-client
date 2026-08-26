@@ -62,7 +62,7 @@ $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
 $form.MinimizeBox = $false
-$form.ClientSize = New-Object System.Drawing.Size(620, 355)
+$form.ClientSize = New-Object System.Drawing.Size(620, 405)
 
 $font = New-Object System.Drawing.Font('Segoe UI', 9)
 $form.Font = $font
@@ -113,15 +113,22 @@ $allow.Size = New-Object System.Drawing.Size(260, 24)
 $allow.Checked = if ($null -eq $config.allow_insecure) { $true } else { [bool]$config.allow_insecure }
 $form.Controls.Add($allow)
 
+$confirmPairing = New-Object System.Windows.Forms.CheckBox
+$confirmPairing.Text = 'Allow visible browser pairing confirmation requests'
+$confirmPairing.Location = New-Object System.Drawing.Point(155, 230)
+$confirmPairing.Size = New-Object System.Drawing.Size(360, 24)
+$confirmPairing.Checked = if ($null -eq $config.confirm_browser_pairing) { $true } else { [bool]$config.confirm_browser_pairing }
+$form.Controls.Add($confirmPairing)
+
 $status = New-Object System.Windows.Forms.Label
 $status.ForeColor = [System.Drawing.Color]::Firebrick
-$status.Location = New-Object System.Drawing.Point(24, 238)
+$status.Location = New-Object System.Drawing.Point(24, 270)
 $status.Size = New-Object System.Drawing.Size(570, 40)
 $form.Controls.Add($status)
 
 $save = New-Object System.Windows.Forms.Button
 $save.Text = 'Save and start'
-$save.Location = New-Object System.Drawing.Point(360, 300)
+$save.Location = New-Object System.Drawing.Point(360, 350)
 $save.Size = New-Object System.Drawing.Size(115, 30)
 $save.Add_Click({
   if ([string]::IsNullOrWhiteSpace($server.Text) -or [string]::IsNullOrWhiteSpace($token.Text) -or $device.Text.Trim().Length -lt 32 -or $device.Text.Trim().Length -gt 256) {
@@ -135,7 +142,7 @@ $form.Controls.Add($save)
 
 $cancel = New-Object System.Windows.Forms.Button
 $cancel.Text = 'Cancel'
-$cancel.Location = New-Object System.Drawing.Point(490, 300)
+$cancel.Location = New-Object System.Drawing.Point(490, 350)
 $cancel.Size = New-Object System.Drawing.Size(85, 30)
 $cancel.Add_Click({
   $form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
@@ -159,6 +166,7 @@ $output = [pscustomobject]@{
   output_limit = [long]$config.output_limit
   allow_insecure = [bool]$allow.Checked
   browser_bridge_address = [string]$config.browser_bridge_address
+  confirm_browser_pairing = [bool]$confirmPairing.Checked
 }
 $output | ConvertTo-Json -Compress
 `

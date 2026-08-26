@@ -13,6 +13,8 @@ const (
 	TypeTerminalResize = "terminal_resize"
 	TypeTerminalClose  = "terminal_close"
 	TypeTerminalClosed = "terminal_closed"
+	TypePairingRequest = "browser_pairing_request"
+	TypePairingResult  = "browser_pairing_result"
 )
 
 type Message struct {
@@ -41,4 +43,11 @@ type Message struct {
 	Data            []byte   `json:"data,omitempty"`
 	Columns         int      `json:"columns,omitempty"`
 	Rows            int      `json:"rows,omitempty"`
+	PairingID       string   `json:"pairing_id,omitempty"`
+	Challenge       string   `json:"challenge,omitempty"`
+	BrowserIP       string   `json:"browser_ip,omitempty"`
+	ServerHost      string   `json:"server_host,omitempty"`
+	ExpiresAt       string   `json:"expires_at,omitempty"`
+	SessionTTL      int      `json:"session_ttl_seconds,omitempty"`
+	Approved        bool     `json:"approved,omitempty"`
 }

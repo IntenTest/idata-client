@@ -1,6 +1,7 @@
 # idata-client
 
-PC 端 agent，支持 macOS 和 Windows。它只发起出站 WebSocket 连接，不开放本地端口。
+PC 端 agent，支持 macOS 和 Windows。它主动建立出站 WebSocket；Windows 可另外在数字
+loopback 地址上提供可关闭的 Client Token 备用配对接口，不监听局域网地址。
 
 ## 构建
 
@@ -28,6 +29,7 @@ GOOS=windows GOARCH=amd64 go build -o bin/idata-client-windows-amd64.exe ./cmd/i
 | `IDATA_OUTPUT_LIMIT` | 否 | `1048576` | stdout 和 stderr 各自的最大字节数 |
 | `IDATA_ALLOW_INSECURE` | 否 | `true` | 是否允许对非本机地址使用明文 `ws://` |
 | `IDATA_BROWSER_BRIDGE_ADDR` | 否 | `127.0.0.1:17891` | 浏览器配对回环地址；设为 `off` 可关闭 |
+| `IDATA_CONFIRM_BROWSER_PAIRING` | 否 | `true` | 是否接受 Server 发来的可见本机确认请求 |
 
 macOS/Linux shell：
 
@@ -52,10 +54,18 @@ Windows 首次双击 EXE 时，如果同目录没有 `idata-client.json` 且未�
 EXE 同目录的 `idata-client.json` 并继续启动。新版 Client 会为每台设备生成不同的
 `device_token`；配置窗口可直接复制它。已有配置缺少此字段时也会自动补充并保存。
 
-连接新版 Server 后，从这台 Windows PC 打开 Server 根地址。页面会优先通过
-`http://127.0.0.1:17891` 向本机 Client 配对；若浏览器显示本地网络权限提示，请允许。
-浏览器策略阻止自动配对时，输入本机 `idata-client.json` 中的 `device_token` 即可。配对后
-页面只连接当前 PC，然后创建一个持续 Shell。连续输入 `cd`、`set` 等 shell 内建
+连接 v0.4.0 或更新 Server 后，从这台 Windows PC 打开 Server 根地址。网页会按直接来源
+IP 显示候选 Client；IP 只用于发现，不会直接授权。点击本机的“请求授权”后，Client 会显示
+置顶窗口，列明请求来源 IP、Server 和最长授权时间。只有用户确认这是本人刚发起的操作，
+并在 Windows 窗口中手动输入完整的 `PAIR IDATA XXXX-XXXX`，确认按钮才会启用。请求默认
+2 分钟失效，同一时间只显示一个确认窗口。
+
+确认成功后，权限只授予发起请求的浏览器，并只允许操作被确认的这台 PC。备用方式仍可
+点击“使用 Client Token 配对”：页面会通过 `http://127.0.0.1:17891` 向本机 Client 读取
+令牌；若浏览器显示本地网络权限提示，请允许。浏览器策略阻止回环访问时，输入本机
+`idata-client.json` 中的 `device_token` 即可。
+
+授权后页面会创建一个持续 Shell。连续输入 `cd`、`set` 等 shell 内建
 命令时状态会保留，stdout/stderr 会实时返回。页面关闭或连接断开时，客户端会结束该 Shell
 及其进程树。第一版使用持久管道 Shell，不支持 `vim`、`top` 等依赖真实 PTY/ConPTY 的
 全屏程序，也不能可靠传递 Ctrl+C；这些能力需要后续终端后端升级。
@@ -81,6 +91,8 @@ idata-client.json
 - client ID 不是密钥；真正的认证凭据是 agent token。
 - 当前静态 token 对所有客户端共享。大规模部署下一步应升级为每设备凭据或 mTLS。
 - Web 设备身份使用每设备独立 token，不依赖源 IP，共享 NAT 或反向代理不会合并设备。
+- 同 IP 浏览器配对必须在 Windows 本地显示确认窗口并输入一次性短语；来源 IP 只筛选候选，
+  本身不是认证凭据。可设置 `IDATA_CONFIRM_BROWSER_PAIRING=false` 完全关闭这种确认请求。
 - 浏览器配对 HTTP 接口只绑定 `127.0.0.1`，只允许配置的 Server Origin 读取，并可关闭。
 - `device_token` 是可控制本机终端的 Bearer 凭据；不要在不同 Client 之间复用或对外发送。
 - `idata-client.json` 中的 token 是明文凭据，应限制该文件仅授权管理员和运行账户可读，

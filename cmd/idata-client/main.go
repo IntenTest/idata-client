@@ -21,6 +21,7 @@ import (
 
 	"idata-client/internal/agent"
 	"idata-client/internal/browserbridge"
+	"idata-client/internal/pairingprompt"
 )
 
 const defaultBrowserBridgeAddress = "127.0.0.1:17891"
@@ -73,6 +74,7 @@ func run() error {
 	outputLimit := flag.Int64("output-limit", envInt64("IDATA_OUTPUT_LIMIT", positiveOr(fileConfig.OutputLimit, 1<<20)), "maximum bytes captured per output stream")
 	allowInsecure := flag.Bool("allow-insecure", envBool("IDATA_ALLOW_INSECURE", boolOr(fileConfig.AllowInsecure, true)), "allow unencrypted ws:// outside localhost")
 	browserBridgeAddress := flag.String("browser-bridge", envOr("IDATA_BROWSER_BRIDGE_ADDR", valueOr(fileConfig.BrowserBridgeAddress, defaultBrowserBridgeAddress)), "loopback browser pairing address, or off")
+	confirmBrowserPairing := flag.Bool("confirm-browser-pairing", envBool("IDATA_CONFIRM_BROWSER_PAIRING", boolOr(fileConfig.ConfirmBrowserPairing, true)), "show a local confirmation window for browser pairing requests")
 	flag.Parse()
 
 	if err := validateServerURL(*serverURL, *allowInsecure); err != nil {
@@ -80,13 +82,18 @@ func run() error {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	deviceToken := envOr("IDATA_DEVICE_TOKEN", fileConfig.DeviceToken)
+	var pairingApprover func(context.Context, pairingprompt.Request) (bool, error)
+	if runtime.GOOS == "windows" && *confirmBrowserPairing {
+		pairingApprover = pairingprompt.Confirm
+	}
 	app, err := agent.New(agent.Config{
-		ServerURL:   *serverURL,
-		AgentToken:  envOr("IDATA_AGENT_TOKEN", fileConfig.AgentToken),
-		ClientID:    *clientID,
-		Hostname:    hostname,
-		DeviceToken: deviceToken,
-		OutputLimit: *outputLimit,
+		ServerURL:       *serverURL,
+		AgentToken:      envOr("IDATA_AGENT_TOKEN", fileConfig.AgentToken),
+		ClientID:        *clientID,
+		Hostname:        hostname,
+		DeviceToken:     deviceToken,
+		OutputLimit:     *outputLimit,
+		PairingApprover: pairingApprover,
 	}, logger)
 	if err != nil {
 		return err
@@ -118,13 +125,14 @@ func run() error {
 }
 
 type clientFileConfig struct {
-	ServerURL            string `json:"server_url"`
-	AgentToken           string `json:"agent_token"`
-	ClientID             string `json:"client_id,omitempty"`
-	DeviceToken          string `json:"device_token,omitempty"`
-	OutputLimit          int64  `json:"output_limit,omitempty"`
-	AllowInsecure        *bool  `json:"allow_insecure,omitempty"`
-	BrowserBridgeAddress string `json:"browser_bridge_address,omitempty"`
+	ServerURL             string `json:"server_url"`
+	AgentToken            string `json:"agent_token"`
+	ClientID              string `json:"client_id,omitempty"`
+	DeviceToken           string `json:"device_token,omitempty"`
+	OutputLimit           int64  `json:"output_limit,omitempty"`
+	AllowInsecure         *bool  `json:"allow_insecure,omitempty"`
+	BrowserBridgeAddress  string `json:"browser_bridge_address,omitempty"`
+	ConfirmBrowserPairing *bool  `json:"confirm_browser_pairing,omitempty"`
 }
 
 func newDeviceToken() (string, error) {
