@@ -24,8 +24,8 @@ GOOS=windows GOARCH=amd64 go build -ldflags="-H=windowsgui" \
 
 | 环境变量 | 必填 | 默认值 | 说明 |
 |---|---:|---|---|
-| `IDATA_SERVER_URL` | 否 | 无 | 为界面的 IP/端口提供初始值；成功连接后自动更新 |
-| `IDATA_AGENT_TOKEN` | 是 | 无 | 管理员预置的客户端连接凭据，不在普通界面显示 |
+| `IDATA_SERVER_URL` | 否 | 无 | 为界面的 Server URL 提供初始值；成功连接后自动更新 |
+| `IDATA_AGENT_TOKEN` | 是 | 无 | 客户端连接凭据；可由管理员预置，也可在启动窗口填写 |
 | `IDATA_CLIENT_ID` | 否 | 当前 hostname | 稳定且唯一的设备 ID |
 | `IDATA_DEVICE_TOKEN` | 否 | 自动生成 | 每台设备唯一的 Web 配对凭据，至少 32 字符 |
 | `IDATA_OUTPUT_LIMIT` | 否 | `1048576` | stdout 和 stderr 各自的最大字节数 |
@@ -44,13 +44,14 @@ $env:IDATA_CLIENT_ID = 'office-windows'
 ```
 
 双击 EXE 后会显示由 EXE 内部直接创建的原生 Windows 登录窗口，不依赖 PowerShell UI
-子进程。普通用户只需填写服务器 IP 和端口并点击
+子进程。用户可在窗口中填写 Server URL、Agent Token 和 Device Token；两个令牌默认遮罩，
+可通过“显示令牌”临时查看。填写后点击
 “建立连接”；真正建立连接后，窗口切换到状态页，可“中断连接”返回登录页，或“最小化到
 托盘”并继续在线。窗口右上角保留标准最小化和关闭按钮，托盘菜单可恢复窗口或退出。
 
-上一次成功建立连接的 IP 和端口会写入 EXE 同目录的 `idata-client.json`，下次启动自动填入；
-连接失败的地址不会覆盖记录。`agent_token` 仍须由管理员提前写入该文件或环境变量，普通界面
-不会显示或记录用户输入的认证信息。Client 会自动生成并补存每台设备独立的 `device_token`。
+连接成功后，窗口中的 Server URL、Agent Token 和 Device Token 会保存到 EXE 同目录的
+`idata-client.json`，下次启动自动填入；连接失败的配置不会覆盖记录。Client 首次启动仍会自动生成并补存每台设备独立的
+`device_token`。令牌不会写入日志，但配置文件包含明文凭据，应限制访问权限。
 
 连接 v0.5.0 或更新 Server 后，从 Windows PC 打开 Server 根地址：
 

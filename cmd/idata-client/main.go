@@ -137,13 +137,8 @@ func run(logger *slog.Logger, logFile *os.File) error {
 		pairingApprover = pairingprompt.Confirm
 	}
 	agentToken := envOr("IDATA_AGENT_TOKEN", fileConfig.AgentToken)
-	serverIP, serverPort := serverEndpoint(*serverURL)
-	setupError := ""
-	if agentToken == "" {
-		setupError = "客户端缺少认证配置，请联系管理员。"
-	}
 	ui, err := startClientUI(clientUIInitial{
-		ServerIP: serverIP, ServerPort: serverPort, AutoConnect: *browserLogin, SetupError: setupError,
+		ServerURL: *serverURL, AgentToken: agentToken, DeviceToken: deviceToken, AutoConnect: *browserLogin,
 	}, logger, logFile)
 	if err != nil {
 		return err
@@ -163,6 +158,7 @@ func run(logger *slog.Logger, logFile *os.File) error {
 	var cancelConnection context.CancelFunc
 	generation := 0
 	activeIP, activePort, activeURL := "", "", ""
+	activeAgentToken, activeDeviceToken := "", ""
 
 	stopConnection := func() {
 		if cancelConnection != nil {
@@ -172,20 +168,18 @@ func run(logger *slog.Logger, logFile *os.File) error {
 	}
 	startConnection := func(action clientUIAction) {
 		stopConnection()
-		candidate, buildErr := serverURLFromEndpoint(action.ServerIP, action.ServerPort, *serverURL)
-		if buildErr == nil {
-			buildErr = validateServerURL(candidate, *allowInsecure)
-		}
+		candidate := strings.TrimSpace(action.ServerURL)
+		buildErr := validateServerURL(candidate, *allowInsecure)
 		if buildErr != nil {
-			_ = ui.update(clientUIUpdate{State: "error", Message: "服务器地址或端口无效。"})
+			_ = ui.update(clientUIUpdate{State: "error", Message: "Server URL 无效，请输入 ws:// 或 wss:// 地址。"})
 			return
 		}
 		generation++
 		currentGeneration := generation
 		connectionCtx, cancel := context.WithCancel(ctx)
 		application, newErr := agent.New(agent.Config{
-			ServerURL: candidate, AgentToken: agentToken, ClientID: *clientID, Hostname: hostname,
-			DeviceToken: deviceToken, OutputLimit: *outputLimit, PairingApprover: pairingApprover,
+			ServerURL: candidate, AgentToken: action.AgentToken, ClientID: *clientID, Hostname: hostname,
+			DeviceToken: action.DeviceToken, OutputLimit: *outputLimit, PairingApprover: pairingApprover,
 			ConnectionState: func(connected bool) {
 				kind := "disconnected"
 				if connected {
@@ -210,9 +204,10 @@ func run(logger *slog.Logger, logFile *os.File) error {
 		}
 		activeIP, activePort = serverEndpoint(candidate)
 		activeURL = candidate
+		activeAgentToken, activeDeviceToken = action.AgentToken, action.DeviceToken
 		cancelConnection = cancel
 		if *browserBridgeAddress != "off" {
-			startBrowserBridge(connectionCtx, candidate, *browserBridgeAddress, *clientID, deviceToken, logger)
+			startBrowserBridge(connectionCtx, candidate, *browserBridgeAddress, *clientID, action.DeviceToken, logger)
 		}
 		go func() {
 			if runErr := application.Run(connectionCtx); runErr != nil && connectionCtx.Err() == nil {
@@ -268,6 +263,8 @@ func run(logger *slog.Logger, logFile *os.File) error {
 			switch event.kind {
 			case "connected":
 				fileConfig.ServerURL = activeURL
+				fileConfig.AgentToken = activeAgentToken
+				fileConfig.DeviceToken = activeDeviceToken
 				if err := saveFileConfig(fileConfig); err != nil {
 					logger.Warn("failed to remember server address", "error", err)
 				}
@@ -298,6 +295,11 @@ func newDeviceToken() (string, error) {
 		return "", fmt.Errorf("generate device token: %w", err)
 	}
 	return hex.EncodeToString(buffer), nil
+}
+
+func validDeviceToken(token string) bool {
+	length := len(strings.TrimSpace(token))
+	return length >= 32 && length <= 256
 }
 
 func loadFileConfig() (clientFileConfig, error) {

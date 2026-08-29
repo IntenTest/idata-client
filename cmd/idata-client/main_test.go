@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -92,6 +93,18 @@ func TestNewDeviceToken(t *testing.T) {
 	}
 	if len(first) != 64 || len(second) != 64 || first == second {
 		t.Fatalf("generated tokens are not unique 256-bit hex values: %q %q", first, second)
+	}
+}
+
+func TestValidDeviceToken(t *testing.T) {
+	if !validDeviceToken(strings.Repeat("a", 32)) {
+		t.Fatal("32-character device token was rejected")
+	}
+	if !validDeviceToken("  " + strings.Repeat("b", 64) + "  ") {
+		t.Fatal("valid device token with surrounding whitespace was rejected")
+	}
+	if validDeviceToken(strings.Repeat("c", 31)) || validDeviceToken(strings.Repeat("d", 257)) {
+		t.Fatal("device token outside the allowed length was accepted")
 	}
 }
 
