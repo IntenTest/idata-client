@@ -40,7 +40,8 @@ $env:IDATA_CLIENT_ID = 'office-windows'
 .\idata-client-windows-amd64.exe
 ```
 
-双击 EXE 后会显示类似即时通信软件登录页的窗口。普通用户只需填写服务器 IP 和端口并点击
+双击 EXE 后会显示由 EXE 内部直接创建的原生 Windows 登录窗口，不依赖 PowerShell UI
+子进程。普通用户只需填写服务器 IP 和端口并点击
 “建立连接”；真正建立连接后，窗口切换到状态页，可“中断连接”返回登录页，或“最小化到
 托盘”并继续在线。窗口右上角保留标准最小化和关闭按钮，托盘菜单可恢复窗口或退出。
 
@@ -85,9 +86,8 @@ idata-client.json
 Client 会把启动、连接、断线重试和异常退出信息追加到 `idata-client.log`。日志优先保存在
 EXE 同目录；如果该目录不可写，则保存在当前用户的本地应用数据缓存目录下的 `iData` 目录。
 发生启动错误或 panic 时，Client 会弹窗显示原因和实际日志路径，不再无提示闪退。诊断日志
-还会逐项记录配置读取、URL 协议注册、UI 子进程 PID、UI 就绪状态、退出码及 PowerShell
-错误输出；Go 运行时写到 stderr 的崩溃信息也会进入该文件。日志不会记录 token 或完整
-Authorization header。
+还会逐项记录配置读取、URL 协议注册、原生 UI 启动和 UI 操作；Go 运行时写到 stderr 的崩溃
+信息也会进入该文件。日志不会记录 token 或完整 Authorization header。
 
 ## 安全说明
 
