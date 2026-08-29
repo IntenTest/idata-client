@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
@@ -107,6 +108,9 @@ func (ui *clientUI) run(initial clientUIInitial, started chan<- error) {
 }
 
 func (ui *clientUI) createWindow(initial clientUIInitial) error {
+	if err := initializeWindowsControls(); err != nil {
+		return err
+	}
 	ui.setupError = initial.SetupError
 	blue := walk.RGB(18, 113, 232)
 	dark := walk.RGB(45, 55, 72)
@@ -221,6 +225,17 @@ func (ui *clientUI) createWindow(initial clientUIInitial) error {
 		return fmt.Errorf("show notification icon: %w", err)
 	}
 	ui.showWindow()
+	return nil
+}
+
+func initializeWindowsControls() error {
+	controls := win.INITCOMMONCONTROLSEX{
+		DwSize: uint32(unsafe.Sizeof(win.INITCOMMONCONTROLSEX{})),
+		DwICC:  win.ICC_WIN95_CLASSES | win.ICC_STANDARD_CLASSES,
+	}
+	if !win.InitCommonControlsEx(&controls) {
+		return errors.New("initialize Windows Common Controls")
+	}
 	return nil
 }
 

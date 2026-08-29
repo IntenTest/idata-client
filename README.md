@@ -13,6 +13,9 @@ GOOS=windows GOARCH=amd64 go build -ldflags="-H=windowsgui" \
   -o bin/idata-client-windows-amd64.exe ./cmd/idata-client
 ```
 
+仓库已包含 Windows AMD64 资源对象，构建时会自动嵌入 Common Controls v6、DPI 和
+`asInvoker` 应用清单；不要从发布构建中移除该资源，否则原生控件可能无法创建。
+
 ## 配置与启动
 
 程序会自动读取与可执行文件位于同一目录的 `idata-client.json`。这适合 Windows 双击
