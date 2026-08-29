@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -30,13 +31,43 @@ import (
 const defaultBrowserBridgeAddress = "127.0.0.1:17891"
 
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "idata-client:", err)
-		os.Exit(1)
-	}
+	os.Exit(mainExitCode())
 }
 
-func run() error {
+func mainExitCode() (exitCode int) {
+	logFile, logPath, err := openApplicationLog()
+	if err != nil {
+		message := fmt.Sprintf("iData Client 无法创建错误日志：\n%v", err)
+		fmt.Fprintln(os.Stderr, message)
+		showFatalError(message)
+		return 1
+	}
+	defer logFile.Close()
+	logger := slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger.Info("client starting", "version", agent.Version, "os", runtime.GOOS, "arch", runtime.GOARCH)
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			logger.Error("client panic", "error", fmt.Sprint(recovered), "stack", string(debug.Stack()))
+			_ = logFile.Sync()
+			showFatalError(fatalErrorMessage("客户端发生异常。", logPath))
+			exitCode = 1
+		}
+	}()
+	if err := run(logger); err != nil {
+		logger.Error("client stopped unexpectedly", "error", err)
+		_ = logFile.Sync()
+		showFatalError(fatalErrorMessage(err.Error(), logPath))
+		return 1
+	}
+	logger.Info("client stopped")
+	return 0
+}
+
+func fatalErrorMessage(reason, logPath string) string {
+	return fmt.Sprintf("iData Client 无法继续运行。\n\n原因：%s\n\n错误日志：%s", reason, logPath)
+}
+
+func run(logger *slog.Logger) error {
 	fileConfig, err := loadFileConfig()
 	if err != nil {
 		return err
@@ -87,7 +118,6 @@ func run() error {
 		return errors.New("idata-client desktop application only supports Windows")
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	deviceToken := envOr("IDATA_DEVICE_TOKEN", fileConfig.DeviceToken)
 	var pairingApprover func(context.Context, pairingprompt.Request) (bool, error)
 	if *confirmBrowserPairing {
@@ -184,6 +214,15 @@ func run() error {
 			return nil
 		case err := <-ui.done:
 			stopConnection()
+			expectedClose := false
+			for action := range ui.actions {
+				if action.Action == "quit" {
+					expectedClose = true
+				}
+			}
+			if err == nil && !expectedClose {
+				err = errors.New("client window closed unexpectedly")
+			}
 			return err
 		case action, ok := <-ui.actions:
 			if !ok {

@@ -33,11 +33,12 @@ type clientUIUpdate struct {
 }
 
 type clientUI struct {
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	actions chan clientUIAction
-	done    chan error
-	mu      sync.Mutex
+	cmd      *exec.Cmd
+	stdin    io.WriteCloser
+	actions  chan clientUIAction
+	done     chan error
+	readDone chan struct{}
+	mu       sync.Mutex
 }
 
 func startClientUI(initial clientUIInitial) (*clientUI, error) {
@@ -62,7 +63,10 @@ func startClientUI(initial clientUIInitial) (*clientUI, error) {
 		return nil, fmt.Errorf("open client window: %w", err)
 	}
 
-	ui := &clientUI{cmd: cmd, stdin: stdin, actions: make(chan clientUIAction, 8), done: make(chan error, 1)}
+	ui := &clientUI{
+		cmd: cmd, stdin: stdin, actions: make(chan clientUIAction, 8),
+		done: make(chan error, 1), readDone: make(chan struct{}),
+	}
 	if err := ui.send(initial); err != nil {
 		_ = cmd.Process.Kill()
 		return nil, err
@@ -71,8 +75,9 @@ func startClientUI(initial clientUIInitial) (*clientUI, error) {
 	go func() {
 		message, _ := io.ReadAll(io.LimitReader(stderr, 64<<10))
 		err := cmd.Wait()
-		if err != nil && len(message) > 0 {
-			err = fmt.Errorf("client window stopped: %s", message)
+		<-ui.readDone
+		if len(message) > 0 {
+			err = fmt.Errorf("client window stopped (%v): %s", err, message)
 		}
 		ui.done <- err
 		close(ui.done)
@@ -82,6 +87,7 @@ func startClientUI(initial clientUIInitial) (*clientUI, error) {
 
 func (ui *clientUI) readActions(reader io.Reader) {
 	defer close(ui.actions)
+	defer close(ui.readDone)
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		var action clientUIAction
