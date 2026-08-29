@@ -18,6 +18,7 @@ const testDeviceToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456
 
 func TestRunStopsWhenContextIsCanceled(t *testing.T) {
 	helloReceived := make(chan protocol.Message, 1)
+	connectionStates := make(chan bool, 2)
 	upgrader := websocket.Upgrader{}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		connection, err := upgrader.Upgrade(writer, request, nil)
@@ -41,6 +42,9 @@ func TestRunStopsWhenContextIsCanceled(t *testing.T) {
 		Hostname:    "test-host",
 		DeviceToken: testDeviceToken,
 		OutputLimit: 1024,
+		ConnectionState: func(connected bool) {
+			connectionStates <- connected
+		},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -58,6 +62,14 @@ func TestRunStopsWhenContextIsCanceled(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("client did not connect")
 	}
+	select {
+	case connected := <-connectionStates:
+		if !connected {
+			t.Fatal("connection callback did not report connected state")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("connection callback was not called")
+	}
 	cancel()
 	select {
 	case err := <-done:
@@ -66,6 +78,14 @@ func TestRunStopsWhenContextIsCanceled(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("client did not stop after cancellation")
+	}
+	select {
+	case connected := <-connectionStates:
+		if connected {
+			t.Fatal("connection callback did not report disconnected state")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("disconnection callback was not called")
 	}
 }
 

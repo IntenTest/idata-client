@@ -22,7 +22,7 @@ import (
 	"idata-client/internal/terminal"
 )
 
-const Version = "0.4.0"
+const Version = "0.5.0"
 
 var pairingChallengePattern = regexp.MustCompile(`^PAIR IDATA [A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$`)
 
@@ -34,6 +34,8 @@ type Config struct {
 	DeviceToken     string
 	OutputLimit     int64
 	PairingApprover func(context.Context, pairingprompt.Request) (bool, error)
+	ConnectionState func(bool)
+	Retrying        func(error, time.Duration)
 }
 
 type Agent struct {
@@ -72,6 +74,9 @@ func (a *Agent) Run(ctx context.Context) error {
 			return nil
 		}
 		a.logger.Warn("connection ended; reconnecting", "error", err, "retry_in", backoff)
+		if a.config.Retrying != nil {
+			a.config.Retrying(err, backoff)
+		}
 		jitter := time.Duration(rand.Int63n(int64(backoff/4 + 1)))
 		timer := time.NewTimer(backoff + jitter)
 		select {
@@ -131,6 +136,10 @@ func (a *Agent) connectAndServe(parent context.Context) error {
 	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	if err := conn.WriteJSON(hello); err != nil {
 		return fmt.Errorf("send hello: %w", err)
+	}
+	if a.config.ConnectionState != nil {
+		a.config.ConnectionState(true)
+		defer a.config.ConnectionState(false)
 	}
 	a.logger.Info("connected", "server", a.config.ServerURL, "client_id", a.config.ClientID)
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -37,7 +38,7 @@ func TestLoadFileConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(filepath.Dir(executable), "idata-client.json")
-	contents := []byte(`{"server_url":"ws://127.0.0.1/ws/agent","agent_token":"test-token","client_id":"windows-test","device_token":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","output_limit":2048,"allow_insecure":false,"browser_bridge_address":"127.0.0.1:19000","confirm_browser_pairing":false}`)
+	contents := []byte(`{"server_url":"ws://127.0.0.1/ws/agent","agent_token":"test-token","client_id":"windows-test","device_token":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","output_limit":2048,"allow_insecure":false,"browser_bridge_address":"127.0.0.1:19000","confirm_browser_pairing":false,"register_url_protocol":false}`)
 	if err := os.WriteFile(configPath, contents, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +59,25 @@ func TestLoadFileConfig(t *testing.T) {
 	}
 	if config.ConfirmBrowserPairing == nil || *config.ConfirmBrowserPairing {
 		t.Fatalf("unexpected browser pairing confirmation config: %#v", config)
+	}
+	if config.RegisterURLProtocol == nil || *config.RegisterURLProtocol {
+		t.Fatalf("unexpected URL protocol config: %#v", config)
+	}
+}
+
+func TestLocalClientRunning(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if !localClientRunning(listener.Addr().String()) {
+		t.Fatal("listening local Client was not detected")
+	}
+	address := listener.Addr().String()
+	listener.Close()
+	if localClientRunning(address) {
+		t.Fatal("closed local Client address was reported as running")
 	}
 }
 
@@ -88,5 +108,51 @@ func TestWebOriginFromServerURL(t *testing.T) {
 		if got != want {
 			t.Fatalf("webOriginFromServerURL(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestServerEndpoint(t *testing.T) {
+	tests := map[string]struct {
+		input string
+		host  string
+		port  string
+	}{
+		"empty uses UI default": {input: "", port: "80"},
+		"plain websocket":       {input: "ws://10.0.0.8/ws/agent", host: "10.0.0.8", port: "80"},
+		"secure websocket":      {input: "wss://idata.example/ws/agent", host: "idata.example", port: "443"},
+		"explicit port":         {input: "ws://10.0.0.8:8080/ws/agent", host: "10.0.0.8", port: "8080"},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			host, port := serverEndpoint(test.input)
+			if host != test.host || port != test.port {
+				t.Fatalf("serverEndpoint(%q) = %q, %q; want %q, %q", test.input, host, port, test.host, test.port)
+			}
+		})
+	}
+}
+
+func TestServerURLFromEndpoint(t *testing.T) {
+	tests := []struct {
+		name     string
+		host     string
+		port     string
+		previous string
+		want     string
+		wantErr  bool
+	}{
+		{name: "IPv4", host: "10.0.0.8", port: "80", want: "ws://10.0.0.8:80/ws/agent"},
+		{name: "IPv6", host: "[::1]", port: "8080", want: "ws://[::1]:8080/ws/agent"},
+		{name: "preserves secure scheme", host: "idata.example", port: "443", previous: "wss://old.example/ws/agent", want: "wss://idata.example:443/ws/agent"},
+		{name: "rejects URL in IP field", host: "http://10.0.0.8", port: "80", wantErr: true},
+		{name: "rejects invalid port", host: "10.0.0.8", port: "70000", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := serverURLFromEndpoint(test.host, test.port, test.previous)
+			if (err != nil) != test.wantErr || got != test.want {
+				t.Fatalf("serverURLFromEndpoint() = %q, %v; want %q, error=%v", got, err, test.want, test.wantErr)
+			}
+		})
 	}
 }

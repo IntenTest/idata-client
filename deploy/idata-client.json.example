@@ -3,5 +3,6 @@
   "agent_token": "replace-with-client-connection-token",
   "client_id": "office-windows",
   "allow_insecure": true,
-  "confirm_browser_pairing": true
+  "confirm_browser_pairing": false,
+  "register_url_protocol": true
 }
