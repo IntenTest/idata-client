@@ -7,7 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
+	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"syscall"
 )
@@ -38,12 +41,13 @@ type clientUI struct {
 	actions  chan clientUIAction
 	done     chan error
 	readDone chan struct{}
+	logger   *slog.Logger
 	mu       sync.Mutex
 }
 
-func startClientUI(initial clientUIInitial) (*clientUI, error) {
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-STA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", clientWindowScript)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+func startClientUI(initial clientUIInitial, logger *slog.Logger, logFile *os.File) (*clientUI, error) {
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", clientWindowScript)
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("create client window input: %w", err)
@@ -62,15 +66,17 @@ func startClientUI(initial clientUIInitial) (*clientUI, error) {
 		_ = stdin.Close()
 		return nil, fmt.Errorf("open client window: %w", err)
 	}
+	logCheckpoint(logger, logFile, "client UI process started", "pid", cmd.Process.Pid)
 
 	ui := &clientUI{
 		cmd: cmd, stdin: stdin, actions: make(chan clientUIAction, 8),
-		done: make(chan error, 1), readDone: make(chan struct{}),
+		done: make(chan error, 1), readDone: make(chan struct{}), logger: logger,
 	}
 	if err := ui.send(initial); err != nil {
 		_ = cmd.Process.Kill()
 		return nil, err
 	}
+	logCheckpoint(logger, logFile, "initial UI configuration sent")
 	go ui.readActions(stdout)
 	go func() {
 		message, _ := io.ReadAll(io.LimitReader(stderr, 64<<10))
@@ -79,6 +85,7 @@ func startClientUI(initial clientUIInitial) (*clientUI, error) {
 		if len(message) > 0 {
 			err = fmt.Errorf("client window stopped (%v): %s", err, message)
 		}
+		logger.Info("client UI process exited", "pid", cmd.Process.Pid, "error", err)
 		ui.done <- err
 		close(ui.done)
 	}()
@@ -93,7 +100,16 @@ func (ui *clientUI) readActions(reader io.Reader) {
 		var action clientUIAction
 		if json.Unmarshal(scanner.Bytes(), &action) == nil && action.Action != "" {
 			ui.actions <- action
+		} else {
+			output := strings.TrimSpace(scanner.Text())
+			if len(output) > 1024 {
+				output = output[:1024] + "…"
+			}
+			ui.logger.Warn("unexpected client UI output", "output", output)
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		ui.logger.Warn("reading client UI output failed", "error", err)
 	}
 }
 
@@ -356,6 +372,7 @@ $timer.Add_Tick({
 })
 $timer.Start()
 $form.Add_Shown({
+  Send-Action ([pscustomobject]@{ action='ready' })
   if (-not [string]::IsNullOrWhiteSpace([string]$initial.setup_error)) {
     $loginStatus.Text = [string]$initial.setup_error
   } elseif ([bool]$initial.auto_connect -and -not [string]::IsNullOrWhiteSpace($serverIP.Text) -and -not [string]::IsNullOrWhiteSpace($serverPort.Text)) {

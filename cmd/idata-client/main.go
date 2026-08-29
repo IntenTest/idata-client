@@ -44,7 +44,11 @@ func mainExitCode() (exitCode int) {
 	}
 	defer logFile.Close()
 	logger := slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	logger.Info("client starting", "version", agent.Version, "os", runtime.GOOS, "arch", runtime.GOARCH)
+	debug.SetTraceback("all")
+	if err := redirectRuntimeErrors(logFile); err != nil {
+		logger.Warn("runtime error redirection failed", "error", err)
+	}
+	logCheckpoint(logger, logFile, "client starting", "version", agent.Version, "os", runtime.GOOS, "arch", runtime.GOARCH, "pid", os.Getpid(), "log_path", logPath)
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			logger.Error("client panic", "error", fmt.Sprint(recovered), "stack", string(debug.Stack()))
@@ -53,13 +57,13 @@ func mainExitCode() (exitCode int) {
 			exitCode = 1
 		}
 	}()
-	if err := run(logger); err != nil {
+	if err := run(logger, logFile); err != nil {
 		logger.Error("client stopped unexpectedly", "error", err)
 		_ = logFile.Sync()
 		showFatalError(fatalErrorMessage(err.Error(), logPath))
 		return 1
 	}
-	logger.Info("client stopped")
+	logCheckpoint(logger, logFile, "client stopped normally")
 	return 0
 }
 
@@ -67,11 +71,13 @@ func fatalErrorMessage(reason, logPath string) string {
 	return fmt.Sprintf("iData Client 无法继续运行。\n\n原因：%s\n\n错误日志：%s", reason, logPath)
 }
 
-func run(logger *slog.Logger) error {
+func run(logger *slog.Logger, logFile *os.File) error {
+	logCheckpoint(logger, logFile, "loading client configuration")
 	fileConfig, err := loadFileConfig()
 	if err != nil {
 		return err
 	}
+	logCheckpoint(logger, logFile, "client configuration loaded")
 	deviceTokenFromEnvironment := os.Getenv("IDATA_DEVICE_TOKEN")
 	deviceTokenGenerated := false
 	if deviceTokenFromEnvironment != "" && fileConfig.DeviceToken == "" {
@@ -84,11 +90,14 @@ func run(logger *slog.Logger) error {
 		deviceTokenGenerated = true
 	}
 	if deviceTokenGenerated {
+		logCheckpoint(logger, logFile, "persisting generated device identity")
 		if err := saveFileConfig(fileConfig); err != nil {
 			return fmt.Errorf("persist generated device token: %w", err)
 		}
+		logCheckpoint(logger, logFile, "generated device identity persisted")
 	}
 
+	logCheckpoint(logger, logFile, "parsing startup options")
 	hostname, _ := os.Hostname()
 	serverURL := flag.String("server", envOr("IDATA_SERVER_URL", fileConfig.ServerURL), "WebSocket server URL")
 	clientID := flag.String("id", envOr("IDATA_CLIENT_ID", valueOr(fileConfig.ClientID, hostname)), "stable client ID")
@@ -100,6 +109,7 @@ func run(logger *slog.Logger) error {
 	unregisterURLProtocol := flag.Bool("unregister-url-protocol", false, "remove the idata:// browser launcher for the current Windows user and exit")
 	browserLogin := flag.Bool("browser-login", false, "start from an idata:// browser login link")
 	flag.Parse()
+	logCheckpoint(logger, logFile, "startup options parsed", "browser_login", *browserLogin)
 	if *unregisterURLProtocol {
 		if runtime.GOOS != "windows" {
 			return errors.New("URL protocol removal is only available on Windows")
@@ -107,9 +117,11 @@ func run(logger *slog.Logger) error {
 		return urlprotocol.Unregister()
 	}
 	if runtime.GOOS == "windows" && *registerURLProtocol {
+		logCheckpoint(logger, logFile, "registering Windows URL protocol")
 		if err := urlprotocol.Register(); err != nil {
 			return err
 		}
+		logCheckpoint(logger, logFile, "Windows URL protocol registered")
 	}
 	if *browserLogin && *browserBridgeAddress != "off" && localClientRunning(*browserBridgeAddress) {
 		return nil
@@ -117,6 +129,7 @@ func run(logger *slog.Logger) error {
 	if runtime.GOOS != "windows" {
 		return errors.New("idata-client desktop application only supports Windows")
 	}
+	logCheckpoint(logger, logFile, "preparing client window")
 
 	deviceToken := envOr("IDATA_DEVICE_TOKEN", fileConfig.DeviceToken)
 	var pairingApprover func(context.Context, pairingprompt.Request) (bool, error)
@@ -131,11 +144,12 @@ func run(logger *slog.Logger) error {
 	}
 	ui, err := startClientUI(clientUIInitial{
 		ServerIP: serverIP, ServerPort: serverPort, AutoConnect: *browserLogin, SetupError: setupError,
-	})
+	}, logger, logFile)
 	if err != nil {
 		return err
 	}
 	defer ui.close()
+	logCheckpoint(logger, logFile, "client UI controller started")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -207,6 +221,8 @@ func run(logger *slog.Logger) error {
 		}()
 	}
 
+	actions := ui.actions
+	logCheckpoint(logger, logFile, "client event loop started")
 	for {
 		select {
 		case <-ctx.Done():
@@ -214,6 +230,7 @@ func run(logger *slog.Logger) error {
 			return nil
 		case err := <-ui.done:
 			stopConnection()
+			logger.Info("client UI completion received", "error", err)
 			expectedClose := false
 			for action := range ui.actions {
 				if action.Action == "quit" {
@@ -224,12 +241,16 @@ func run(logger *slog.Logger) error {
 				err = errors.New("client window closed unexpectedly")
 			}
 			return err
-		case action, ok := <-ui.actions:
+		case action, ok := <-actions:
 			if !ok {
-				stopConnection()
-				return nil
+				logger.Warn("client UI action stream closed; waiting for process result")
+				actions = nil
+				continue
 			}
+			logger.Info("client UI action received", "action", action.Action)
 			switch action.Action {
+			case "ready":
+				logCheckpoint(logger, logFile, "client window ready")
 			case "connect":
 				startConnection(action)
 			case "disconnect":

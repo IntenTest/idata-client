@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 )
@@ -48,4 +49,9 @@ func openLogAt(path string) (*os.File, error) {
 		return nil, fmt.Errorf("open log %s: %w", path, err)
 	}
 	return file, nil
+}
+
+func logCheckpoint(logger *slog.Logger, file *os.File, message string, args ...any) {
+	logger.Info(message, args...)
+	_ = file.Sync()
 }

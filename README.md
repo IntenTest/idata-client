@@ -84,8 +84,10 @@ idata-client.json
 
 Client 会把启动、连接、断线重试和异常退出信息追加到 `idata-client.log`。日志优先保存在
 EXE 同目录；如果该目录不可写，则保存在当前用户的本地应用数据缓存目录下的 `iData` 目录。
-发生启动错误或 panic 时，Client 会弹窗显示原因和实际日志路径，不再无提示闪退。日志不会
-记录 token 或完整 Authorization header。
+发生启动错误或 panic 时，Client 会弹窗显示原因和实际日志路径，不再无提示闪退。诊断日志
+还会逐项记录配置读取、URL 协议注册、UI 子进程 PID、UI 就绪状态、退出码及 PowerShell
+错误输出；Go 运行时写到 stderr 的崩溃信息也会进入该文件。日志不会记录 token 或完整
+Authorization header。
 
 ## 安全说明
 

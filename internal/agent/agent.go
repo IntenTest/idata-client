@@ -22,7 +22,7 @@ import (
 	"idata-client/internal/terminal"
 )
 
-const Version = "0.5.1"
+const Version = "0.5.2"
 
 var pairingChallengePattern = regexp.MustCompile(`^PAIR IDATA [A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$`)
 

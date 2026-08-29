@@ -2,7 +2,11 @@
 
 package main
 
-import "errors"
+import (
+	"errors"
+	"log/slog"
+	"os"
+)
 
 type clientUIInitial struct {
 	ServerIP, ServerPort string
@@ -16,7 +20,7 @@ type clientUI struct {
 	done    chan error
 }
 
-func startClientUI(clientUIInitial) (*clientUI, error) {
+func startClientUI(clientUIInitial, *slog.Logger, *os.File) (*clientUI, error) {
 	return nil, errors.New("idata-client desktop UI only supports Windows")
 }
 func (ui *clientUI) update(clientUIUpdate) error { return nil }
