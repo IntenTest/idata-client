@@ -32,6 +32,8 @@ import (
 const (
 	defaultAgentToken           = "Fields2012"
 	defaultBrowserBridgeAddress = "127.0.0.1:17891"
+	specialServerIP             = "10.90.65.189"
+	specialServerPort           = "12345"
 )
 
 func main() {
@@ -246,7 +248,7 @@ func run(logger *slog.Logger, logFile *os.File) error {
 	}
 	startConnection := func(action clientUIAction) {
 		stopConnection()
-		_, configuredPort := serverEndpoint(*serverURL)
+		configuredPort := serverPortForHost(action.ServerIP, *serverURL)
 		candidate, buildErr := serverURLFromEndpoint(action.ServerIP, configuredPort, *serverURL)
 		if buildErr == nil {
 			buildErr = validateServerURL(candidate, *allowInsecure)
@@ -491,6 +493,22 @@ func serverEndpoint(raw string) (string, string) {
 		}
 	}
 	return parsed.Hostname(), port
+}
+
+func serverPortForHost(host, previousURL string) string {
+	host = strings.TrimSpace(strings.Trim(host, "[]"))
+	if parsed, err := url.Parse(previousURL); err == nil && parsed.Hostname() == host {
+		if port := parsed.Port(); port != "" {
+			return port
+		}
+		if parsed.Scheme == "wss" {
+			return "443"
+		}
+	}
+	if host == specialServerIP {
+		return specialServerPort
+	}
+	return "80"
 }
 
 func serverURLFromEndpoint(host, port, previousURL string) (string, error) {
