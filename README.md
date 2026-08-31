@@ -77,6 +77,10 @@ Client 每次正常启动都会在当前 Windows 用户的 `HKCU\Software\Classe
 及其进程树。第一版使用持久管道 Shell，不支持 `vim`、`top` 等依赖真实 PTY/ConPTY 的
 全屏程序，也不能可靠传递 Ctrl+C；这些能力需要后续终端后端升级。
 
+远程命令和持续 Shell 使用隐藏的后台 `cmd.exe`，不会在 Windows 桌面弹出命令行窗口；
+用于结束进程树的 `taskkill.exe` 同样隐藏运行。该行为只影响窗口显示，不改变当前用户权限、
+命令审计边界或用户主动退出 Client 的能力。
+
 Windows 也可以提前把下面两个文件放在同一目录后，直接双击 EXE：
 
 ```text
