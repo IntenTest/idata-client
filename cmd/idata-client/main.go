@@ -497,6 +497,9 @@ func serverEndpoint(raw string) (string, string) {
 
 func serverPortForHost(host, previousURL string) string {
 	host = strings.TrimSpace(strings.Trim(host, "[]"))
+	if host == specialServerIP {
+		return specialServerPort
+	}
 	if parsed, err := url.Parse(previousURL); err == nil && parsed.Hostname() == host {
 		if port := parsed.Port(); port != "" {
 			return port
@@ -504,9 +507,6 @@ func serverPortForHost(host, previousURL string) string {
 		if parsed.Scheme == "wss" {
 			return "443"
 		}
-	}
-	if host == specialServerIP {
-		return specialServerPort
 	}
 	return "80"
 }

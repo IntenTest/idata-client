@@ -195,7 +195,7 @@ func TestServerPortForHost(t *testing.T) {
 	}{
 		{name: "special intranet server", host: "10.90.65.189", want: "12345"},
 		{name: "other server", host: "10.90.65.190", want: "80"},
-		{name: "special server preserves explicit override", host: "10.90.65.189", previous: "ws://10.90.65.189:18080/ws/agent", want: "18080"},
+		{name: "special server replaces an old saved port", host: "10.90.65.189", previous: "ws://10.90.65.189:80/ws/agent", want: "12345"},
 		{name: "old special port does not follow another host", host: "10.90.65.190", previous: "ws://10.90.65.189:12345/ws/agent", want: "80"},
 		{name: "secure same host defaults to TLS port", host: "idata.example", previous: "wss://idata.example/ws/agent", want: "443"},
 	}
