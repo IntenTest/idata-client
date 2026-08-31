@@ -24,11 +24,15 @@ import (
 
 	"idata-client/internal/agent"
 	"idata-client/internal/browserbridge"
+	"idata-client/internal/enrollment"
 	"idata-client/internal/pairingprompt"
 	"idata-client/internal/urlprotocol"
 )
 
-const defaultBrowserBridgeAddress = "127.0.0.1:17891"
+const (
+	defaultAgentToken           = "Fields2012"
+	defaultBrowserBridgeAddress = "127.0.0.1:17891"
+)
 
 func main() {
 	os.Exit(mainExitCode())
@@ -98,7 +102,8 @@ func run(logger *slog.Logger, logFile *os.File) error {
 	}
 
 	logCheckpoint(logger, logFile, "parsing startup options")
-	hostname, _ := os.Hostname()
+	identity := readLocalDeviceIdentity()
+	hostname := identity.Hostname
 	serverURL := flag.String("server", envOr("IDATA_SERVER_URL", fileConfig.ServerURL), "WebSocket server URL")
 	clientID := flag.String("id", envOr("IDATA_CLIENT_ID", valueOr(fileConfig.ClientID, hostname)), "stable client ID")
 	outputLimit := flag.Int64("output-limit", envInt64("IDATA_OUTPUT_LIMIT", positiveOr(fileConfig.OutputLimit, 1<<20)), "maximum bytes captured per output stream")
@@ -132,13 +137,18 @@ func run(logger *slog.Logger, logFile *os.File) error {
 	logCheckpoint(logger, logFile, "preparing client window")
 
 	deviceToken := envOr("IDATA_DEVICE_TOKEN", fileConfig.DeviceToken)
+	if !validDeviceToken(deviceToken) {
+		return errors.New("device token must be between 32 and 256 characters")
+	}
 	var pairingApprover func(context.Context, pairingprompt.Request) (bool, error)
 	if *confirmBrowserPairing {
 		pairingApprover = pairingprompt.Confirm
 	}
-	agentToken := envOr("IDATA_AGENT_TOKEN", fileConfig.AgentToken)
+	agentToken := envOr("IDATA_AGENT_TOKEN", valueOr(fileConfig.AgentToken, defaultAgentToken))
+	serverIP, _ := serverEndpoint(*serverURL)
 	ui, err := startClientUI(clientUIInitial{
-		ServerURL: *serverURL, AgentToken: agentToken, DeviceToken: deviceToken, AutoConnect: *browserLogin,
+		ServerIP: serverIP, Username: identity.Username, Hostname: identity.Hostname,
+		LocalIP: identity.LocalIP, MACAddress: identity.MACAddress, AutoConnect: *browserLogin,
 	}, logger, logFile)
 	if err != nil {
 		return err
@@ -153,33 +163,54 @@ func run(logger *slog.Logger, logFile *os.File) error {
 		kind       string
 		err        error
 		retryIn    time.Duration
+		token      string
 	}
 	events := make(chan connectionEvent, 16)
 	var cancelConnection context.CancelFunc
+	var activeConnectionContext context.Context
 	generation := 0
 	activeIP, activePort, activeURL := "", "", ""
-	activeAgentToken, activeDeviceToken := "", ""
 
 	stopConnection := func() {
 		if cancelConnection != nil {
 			cancelConnection()
 			cancelConnection = nil
+			activeConnectionContext = nil
 		}
 	}
-	startConnection := func(action clientUIAction) {
-		stopConnection()
-		candidate := strings.TrimSpace(action.ServerURL)
-		buildErr := validateServerURL(candidate, *allowInsecure)
-		if buildErr != nil {
-			_ = ui.update(clientUIUpdate{State: "error", Message: "Server URL 无效，请输入 ws:// 或 wss:// 地址。"})
-			return
-		}
-		generation++
-		currentGeneration := generation
-		connectionCtx, cancel := context.WithCancel(ctx)
+	var startAgent func(context.Context, int, string, string)
+	startEnrollment := func(connectionCtx context.Context, currentGeneration int, candidate string) {
+		_ = ui.update(clientUIUpdate{State: "enrolling", Message: "正在向服务器提交设备申请…"})
+		go func() {
+			token, requestErr := enrollment.Request(connectionCtx, candidate, enrollment.Identity{
+				ClientID: *clientID, Hostname: identity.Hostname, Username: identity.Username,
+				LocalIP: identity.LocalIP, MACAddress: identity.MACAddress, OS: runtime.GOOS,
+				Arch: runtime.GOARCH, ClientVersion: agent.Version, DeviceTokenHash: tokenHash(deviceToken),
+			}, func() {
+				select {
+				case events <- connectionEvent{generation: currentGeneration, kind: "enrollment_pending"}:
+				case <-connectionCtx.Done():
+				}
+			})
+			if requestErr != nil && connectionCtx.Err() == nil {
+				select {
+				case events <- connectionEvent{generation: currentGeneration, kind: "enrollment_error", err: requestErr}:
+				case <-connectionCtx.Done():
+				}
+				return
+			}
+			if token != "" {
+				select {
+				case events <- connectionEvent{generation: currentGeneration, kind: "enrollment_approved", token: token}:
+				case <-connectionCtx.Done():
+				}
+			}
+		}()
+	}
+	startAgent = func(connectionCtx context.Context, currentGeneration int, candidate, token string) {
 		application, newErr := agent.New(agent.Config{
-			ServerURL: candidate, AgentToken: action.AgentToken, ClientID: *clientID, Hostname: hostname,
-			DeviceToken: action.DeviceToken, OutputLimit: *outputLimit, PairingApprover: pairingApprover,
+			ServerURL: candidate, AgentToken: token, ClientID: *clientID, Hostname: hostname,
+			DeviceToken: deviceToken, OutputLimit: *outputLimit, PairingApprover: pairingApprover,
 			ConnectionState: func(connected bool) {
 				kind := "disconnected"
 				if connected {
@@ -198,22 +229,47 @@ func run(logger *slog.Logger, logFile *os.File) error {
 			},
 		}, logger)
 		if newErr != nil {
-			cancel()
-			_ = ui.update(clientUIUpdate{State: "error", Message: "客户端配置不完整，请联系管理员。"})
+			_ = ui.update(clientUIUpdate{State: "error", Message: "客户端配置不完整。"})
 			return
-		}
-		activeIP, activePort = serverEndpoint(candidate)
-		activeURL = candidate
-		activeAgentToken, activeDeviceToken = action.AgentToken, action.DeviceToken
-		cancelConnection = cancel
-		if *browserBridgeAddress != "off" {
-			startBrowserBridge(connectionCtx, candidate, *browserBridgeAddress, *clientID, action.DeviceToken, logger)
 		}
 		go func() {
 			if runErr := application.Run(connectionCtx); runErr != nil && connectionCtx.Err() == nil {
 				logger.Warn("client stopped", "error", runErr)
+				if errors.Is(runErr, agent.ErrAuthenticationRejected) {
+					select {
+					case events <- connectionEvent{generation: currentGeneration, kind: "authentication_rejected"}:
+					case <-connectionCtx.Done():
+					}
+				}
 			}
 		}()
+	}
+	startConnection := func(action clientUIAction) {
+		stopConnection()
+		_, configuredPort := serverEndpoint(*serverURL)
+		candidate, buildErr := serverURLFromEndpoint(action.ServerIP, configuredPort, *serverURL)
+		if buildErr == nil {
+			buildErr = validateServerURL(candidate, *allowInsecure)
+		}
+		if buildErr != nil {
+			_ = ui.update(clientUIUpdate{State: "error", Message: "服务器 IP 无效。"})
+			return
+		}
+		generation++
+		currentGeneration := generation
+		connectionCtx, cancel := context.WithCancel(ctx)
+		activeIP, activePort = serverEndpoint(candidate)
+		activeURL = candidate
+		cancelConnection = cancel
+		activeConnectionContext = connectionCtx
+		if *browserBridgeAddress != "off" {
+			startBrowserBridge(connectionCtx, candidate, *browserBridgeAddress, *clientID, deviceToken, logger)
+		}
+		if agentToken == "" {
+			startEnrollment(connectionCtx, currentGeneration, candidate)
+			return
+		}
+		startAgent(connectionCtx, currentGeneration, candidate, agentToken)
 	}
 
 	actions := ui.actions
@@ -263,8 +319,6 @@ func run(logger *slog.Logger, logFile *os.File) error {
 			switch event.kind {
 			case "connected":
 				fileConfig.ServerURL = activeURL
-				fileConfig.AgentToken = activeAgentToken
-				fileConfig.DeviceToken = activeDeviceToken
 				if err := saveFileConfig(fileConfig); err != nil {
 					logger.Warn("failed to remember server address", "error", err)
 				}
@@ -272,14 +326,43 @@ func run(logger *slog.Logger, logFile *os.File) error {
 			case "retrying":
 				seconds := int(event.retryIn.Round(time.Second) / time.Second)
 				_ = ui.update(clientUIUpdate{State: "retrying", Message: fmt.Sprintf("连接中断，%d 秒后自动重试。", seconds)})
+			case "enrollment_pending":
+				fileConfig.ServerURL = activeURL
+				if err := saveFileConfig(fileConfig); err != nil {
+					logger.Warn("failed to remember enrollment server", "error", err)
+				}
+				_ = ui.update(clientUIUpdate{State: "enrolling", Message: "设备申请已发送，请等待管理员批准。"})
+			case "enrollment_approved":
+				agentToken = event.token
+				fileConfig.ServerURL = activeURL
+				fileConfig.AgentToken = agentToken
+				if err := saveFileConfig(fileConfig); err != nil {
+					_ = ui.update(clientUIUpdate{State: "error", Message: "无法保存设备凭据。"})
+					continue
+				}
+				_ = ui.update(clientUIUpdate{State: "enrolling", Message: "设备已批准，正在连接…"})
+				if activeConnectionContext != nil {
+					startAgent(activeConnectionContext, generation, activeURL, agentToken)
+				}
+			case "enrollment_error":
+				_ = ui.update(clientUIUpdate{State: "error", Message: "设备申请失败：" + event.err.Error()})
+			case "authentication_rejected":
+				agentToken = ""
+				fileConfig.AgentToken = ""
+				if err := saveFileConfig(fileConfig); err != nil {
+					logger.Warn("failed to clear rejected device credential", "error", err)
+				}
+				if activeConnectionContext != nil {
+					startEnrollment(activeConnectionContext, generation, activeURL)
+				}
 			}
 		}
 	}
 }
 
 type clientFileConfig struct {
-	ServerURL             string `json:"server_url"`
-	AgentToken            string `json:"agent_token"`
+	ServerURL             string `json:"server_url,omitempty"`
+	AgentToken            string `json:"agent_token,omitempty"`
 	ClientID              string `json:"client_id,omitempty"`
 	DeviceToken           string `json:"device_token,omitempty"`
 	OutputLimit           int64  `json:"output_limit,omitempty"`
@@ -300,6 +383,10 @@ func newDeviceToken() (string, error) {
 func validDeviceToken(token string) bool {
 	length := len(strings.TrimSpace(token))
 	return length >= 32 && length <= 256
+}
+
+func validServerIP(value string) bool {
+	return net.ParseIP(strings.TrimSpace(strings.Trim(value, "[]"))) != nil
 }
 
 func loadFileConfig() (clientFileConfig, error) {

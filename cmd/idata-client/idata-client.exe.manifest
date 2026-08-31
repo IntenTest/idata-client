@@ -4,7 +4,7 @@
     name="IntenTest.iDataClient"
     processorArchitecture="*"
     type="win32"
-    version="0.5.4.0" />
+    version="0.6.0.0" />
   <description>iData Client</description>
   <dependency>
     <dependentAssembly>

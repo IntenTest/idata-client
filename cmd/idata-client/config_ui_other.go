@@ -9,10 +9,10 @@ import (
 )
 
 type clientUIInitial struct {
-	ServerURL, AgentToken, DeviceToken string
-	AutoConnect                        bool
+	ServerIP, Username, Hostname, LocalIP, MACAddress string
+	AutoConnect                                       bool
 }
-type clientUIAction struct{ Action, ServerURL, AgentToken, DeviceToken string }
+type clientUIAction struct{ Action, ServerIP string }
 type clientUIUpdate struct{ State, ServerIP, ServerPort, Message string }
 type clientUI struct {
 	actions chan clientUIAction

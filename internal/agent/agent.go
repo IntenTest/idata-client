@@ -22,7 +22,9 @@ import (
 	"idata-client/internal/terminal"
 )
 
-const Version = "0.5.5"
+const Version = "0.6.0"
+
+var ErrAuthenticationRejected = errors.New("agent authentication rejected")
 
 var pairingChallengePattern = regexp.MustCompile(`^PAIR IDATA [A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$`)
 
@@ -73,6 +75,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return nil
 		}
+		if errors.Is(err, ErrAuthenticationRejected) {
+			return err
+		}
 		a.logger.Warn("connection ended; reconnecting", "error", err, "retry_in", backoff)
 		if a.config.Retrying != nil {
 			a.config.Retrying(err, backoff)
@@ -103,6 +108,9 @@ func (a *Agent) connectAndServe(parent context.Context) error {
 	conn, response, err := dialer.DialContext(parent, a.config.ServerURL, header)
 	if err != nil {
 		if response != nil {
+			if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+				return fmt.Errorf("%w: HTTP %d", ErrAuthenticationRejected, response.StatusCode)
+			}
 			return fmt.Errorf("connect failed: HTTP %d", response.StatusCode)
 		}
 		return fmt.Errorf("connect failed: %w", err)

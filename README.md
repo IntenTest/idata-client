@@ -24,8 +24,8 @@ GOOS=windows GOARCH=amd64 go build -ldflags="-H=windowsgui" \
 
 | 环境变量 | 必填 | 默认值 | 说明 |
 |---|---:|---|---|
-| `IDATA_SERVER_URL` | 否 | 无 | 为界面的 Server URL 提供初始值；成功连接后自动更新 |
-| `IDATA_AGENT_TOKEN` | 是 | 无 | 客户端连接凭据；可由管理员预置，也可在启动窗口填写 |
+| `IDATA_SERVER_URL` | 否 | 无 | 为界面的服务器 IP 提供初始值；成功申请后自动更新 |
+| `IDATA_AGENT_TOKEN` | 否 | 客户端内置共享值 | 未配置设备专属凭据时使用内置兼容凭据；环境变量可覆盖 |
 | `IDATA_CLIENT_ID` | 否 | 当前 hostname | 稳定且唯一的设备 ID |
 | `IDATA_DEVICE_TOKEN` | 否 | 自动生成 | 每台设备唯一的 Web 配对凭据，至少 32 字符 |
 | `IDATA_OUTPUT_LIMIT` | 否 | `1048576` | stdout 和 stderr 各自的最大字节数 |
@@ -38,20 +38,21 @@ GOOS=windows GOARCH=amd64 go build -ldflags="-H=windowsgui" \
 
 ```powershell
 $env:IDATA_SERVER_URL = 'ws://服务器IP/ws/agent'
-$env:IDATA_AGENT_TOKEN = '...'
 $env:IDATA_CLIENT_ID = 'office-windows'
 .\idata-client-windows-amd64.exe
 ```
 
 双击 EXE 后会显示由 EXE 内部直接创建的原生 Windows 登录窗口，不依赖 PowerShell UI
-子进程。用户可在窗口中填写 Server URL、Agent Token 和 Device Token；两个令牌默认遮罩，
-可通过“显示令牌”临时查看。填写后点击
+子进程。窗口只要求填写服务器 IP，并显示当前用户名、机器名、主要局域网 IPv4 和对应网卡
+MAC 地址。填写后点击
 “建立连接”；真正建立连接后，窗口切换到状态页，可“中断连接”返回登录页，或“最小化到
 托盘”并继续在线。窗口右上角保留标准最小化和关闭按钮，托盘菜单可恢复窗口或退出。
 
-连接成功后，窗口中的 Server URL、Agent Token 和 Device Token 会保存到 EXE 同目录的
-`idata-client.json`，下次启动自动填入；连接失败的配置不会覆盖记录。Client 首次启动仍会自动生成并补存每台设备独立的
-`device_token`。令牌不会写入日志，但配置文件包含明文凭据，应限制访问权限。
+Client 默认使用内置的 v0.5 共享 Agent Token 建立连接，Server 需要配置相同的
+`IDATA_AGENT_TOKEN`。环境变量或配置文件中的 Agent Token 优先于内置值。共享凭据被 Server
+拒绝时，Client 会自动转入设备申请流程；管理员在 Server 的 `/admin/` 控制台批准后，Server
+签发与 Client ID、Device Token 哈希绑定的专属凭据，Client 会自动保存。Client 首次启动仍会
+自动生成并补存每台设备独立的 `device_token`，但登录界面不会显示它。
 
 连接 v0.5.0 或更新 Server 后，从 Windows PC 打开 Server 根地址：
 
@@ -96,8 +97,10 @@ EXE 同目录；如果该目录不可写，则保存在当前用户的本地应�
 ## 安全说明
 
 - 当前 `ws://` 端口 80 方案没有传输加密，只适合受信任内网。
-- client ID 不是密钥；真正的认证凭据是 agent token。
-- 当前静态 token 对所有客户端共享。大规模部署下一步应升级为每设备凭据或 mTLS。
+- client ID、本机 IP、MAC 地址都不是密钥；真正的认证凭据是管理员批准后签发的设备专属 token。
+- 设备申请中的用户名、机器名、本机 IP 和 MAC 是 Client 自报信息，管理员还应核对 Server 看到的来源 IP。
+- 内置的共享 Agent Token 随客户端程序分发，不能视为秘密，只适合当前受信任内网的兼容部署；
+  更严格的部署应通过环境变量覆盖，并使用设备审批签发的专属凭据。
 - 普通 Web 免密登录按 Server 看到的直接来源 IP 划分范围；共享 NAT、VPN 或代理出口下的
   用户会看到并能操作该出口下的全部 Client。这只适合小规模可信公司内网。
 - `idata://` 只负责启动 Client，不携带 agent token、device token 或浏览器 Cookie。

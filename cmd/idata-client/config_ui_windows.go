@@ -18,17 +18,17 @@ import (
 )
 
 type clientUIInitial struct {
-	ServerURL   string
-	AgentToken  string
-	DeviceToken string
+	ServerIP    string
+	Username    string
+	Hostname    string
+	LocalIP     string
+	MACAddress  string
 	AutoConnect bool
 }
 
 type clientUIAction struct {
-	Action      string
-	ServerURL   string
-	AgentToken  string
-	DeviceToken string
+	Action   string
+	ServerIP string
 }
 
 type clientUIUpdate struct {
@@ -42,10 +42,7 @@ type clientUI struct {
 	mainWindow       *walk.MainWindow
 	loginPanel       *walk.Composite
 	connectedPanel   *walk.Composite
-	serverURL        *walk.LineEdit
-	agentToken       *walk.LineEdit
-	deviceToken      *walk.LineEdit
-	showTokens       *walk.CheckBox
+	serverIP         *walk.LineEdit
 	loginStatus      *walk.Label
 	connectButton    *walk.PushButton
 	connectedAddress *walk.Label
@@ -103,7 +100,7 @@ func (ui *clientUI) run(initial clientUIInitial, started chan<- error) {
 	started <- nil
 	startedSent = true
 	ui.emit(clientUIAction{Action: "ready"})
-	if initial.AutoConnect && strings.TrimSpace(initial.ServerURL) != "" && strings.TrimSpace(initial.AgentToken) != "" && validDeviceToken(initial.DeviceToken) {
+	if initial.AutoConnect && validServerIP(initial.ServerIP) {
 		ui.beginConnect()
 	}
 	ui.mainWindow.Run()
@@ -117,7 +114,7 @@ func (ui *clientUI) createWindow(initial clientUIInitial) error {
 	dark := walk.RGB(45, 55, 72)
 	muted := walk.RGB(90, 101, 120)
 	background := SolidColorBrush{Color: walk.RGB(246, 248, 252)}
-	width, height := 450, 620
+	width, height := 450, 600
 	x := (int(win.GetSystemMetrics(win.SM_CXSCREEN)) - width) / 2
 	y := (int(win.GetSystemMetrics(win.SM_CYSCREEN)) - height) / 2
 
@@ -149,15 +146,14 @@ func (ui *clientUI) createWindow(initial clientUIInitial) error {
 					Label{Text: "连接到管理服务器", Font: Font{Family: "Microsoft YaHei UI", PointSize: 11, Bold: true},
 						TextColor: dark, MinSize: Size{Height: 30}},
 					VSpacer{Size: 4},
-					Label{Text: "Server URL", TextColor: muted},
-					LineEdit{AssignTo: &ui.serverURL, Text: initial.ServerURL, CueBanner: "例如 ws://10.0.0.2/ws/agent", MinSize: Size{Height: 30}},
-					VSpacer{Size: 4},
-					Label{Text: "Agent Token", TextColor: muted},
-					LineEdit{AssignTo: &ui.agentToken, Text: initial.AgentToken, PasswordMode: true, CueBanner: "请输入客户端连接凭据", MinSize: Size{Height: 30}},
-					VSpacer{Size: 4},
-					Label{Text: "Device Token", TextColor: muted},
-					LineEdit{AssignTo: &ui.deviceToken, Text: initial.DeviceToken, PasswordMode: true, CueBanner: "至少 32 个字符", MinSize: Size{Height: 30}},
-					CheckBox{AssignTo: &ui.showTokens, Text: "显示令牌", OnCheckedChanged: ui.toggleTokenVisibility},
+					Label{Text: "服务器 IP", TextColor: muted},
+					LineEdit{AssignTo: &ui.serverIP, Text: initial.ServerIP, CueBanner: "例如 10.0.0.2", MinSize: Size{Height: 30}},
+					VSpacer{Size: 8},
+					Label{Text: "本机信息", Font: Font{Family: "Microsoft YaHei UI", PointSize: 9, Bold: true}, TextColor: dark},
+					Label{Text: "用户名    " + displayIdentityValue(initial.Username), TextColor: muted, MinSize: Size{Height: 22}},
+					Label{Text: "机器名    " + displayIdentityValue(initial.Hostname), TextColor: muted, MinSize: Size{Height: 22}},
+					Label{Text: "本机 IP   " + displayIdentityValue(initial.LocalIP), TextColor: muted, MinSize: Size{Height: 22}},
+					Label{Text: "MAC 地址  " + displayIdentityValue(initial.MACAddress), TextColor: muted, MinSize: Size{Height: 22}},
 					Label{AssignTo: &ui.loginStatus, TextColor: walk.RGB(178, 48, 48),
 						TextAlignment: AlignCenter, MinSize: Size{Height: 42}},
 					PushButton{AssignTo: &ui.connectButton, Text: "建立连接", MinSize: Size{Height: 40}, OnClicked: ui.toggleConnect},
@@ -262,19 +258,9 @@ func (ui *clientUI) toggleConnect() {
 }
 
 func (ui *clientUI) beginConnect() {
-	serverURL := strings.TrimSpace(ui.serverURL.Text())
-	agentToken := strings.TrimSpace(ui.agentToken.Text())
-	deviceToken := strings.TrimSpace(ui.deviceToken.Text())
-	if serverURL == "" {
-		_ = ui.loginStatus.SetText("请输入 Server URL。")
-		return
-	}
-	if agentToken == "" {
-		_ = ui.loginStatus.SetText("请输入 Agent Token。")
-		return
-	}
-	if !validDeviceToken(deviceToken) {
-		_ = ui.loginStatus.SetText("Device Token 长度必须为 32–256 个字符。")
+	serverIP := strings.TrimSpace(strings.Trim(ui.serverIP.Text(), "[]"))
+	if !validServerIP(serverIP) {
+		_ = ui.loginStatus.SetText("请输入有效的服务器 IP。")
 		return
 	}
 	ui.connecting = true
@@ -282,24 +268,18 @@ func (ui *clientUI) beginConnect() {
 	_ = ui.connectButton.SetText("取消连接")
 	ui.loginStatus.SetTextColor(walk.RGB(90, 101, 120))
 	_ = ui.loginStatus.SetText("正在连接服务器…")
-	ui.emit(clientUIAction{Action: "connect", ServerURL: serverURL, AgentToken: agentToken, DeviceToken: deviceToken})
+	ui.emit(clientUIAction{Action: "connect", ServerIP: serverIP})
 }
 
-func (ui *clientUI) toggleTokenVisibility() {
-	visible := ui.showTokens != nil && ui.showTokens.Checked()
-	if ui.agentToken != nil {
-		ui.agentToken.SetPasswordMode(!visible)
+func displayIdentityValue(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "未获取"
 	}
-	if ui.deviceToken != nil {
-		ui.deviceToken.SetPasswordMode(!visible)
-	}
+	return value
 }
 
 func (ui *clientUI) setConfigurationEnabled(enabled bool) {
-	ui.serverURL.SetEnabled(enabled)
-	ui.agentToken.SetEnabled(enabled)
-	ui.deviceToken.SetEnabled(enabled)
-	ui.showTokens.SetEnabled(enabled)
+	ui.serverIP.SetEnabled(enabled)
 }
 
 func (ui *clientUI) disconnect() {
@@ -315,7 +295,7 @@ func (ui *clientUI) showLogin() {
 	_ = ui.connectButton.SetText("建立连接")
 	ui.loginStatus.SetTextColor(walk.RGB(178, 48, 48))
 	_ = ui.loginStatus.SetText("")
-	_ = ui.serverURL.SetFocus()
+	_ = ui.serverIP.SetFocus()
 }
 
 func (ui *clientUI) showConnected(update clientUIUpdate) {
@@ -342,7 +322,7 @@ func (ui *clientUI) showWindow() {
 	win.ShowWindow(ui.mainWindow.Handle(), win.SW_RESTORE)
 	win.SetForegroundWindow(ui.mainWindow.Handle())
 	if ui.loginPanel != nil && ui.loginPanel.Visible() {
-		_ = ui.serverURL.SetFocus()
+		_ = ui.serverIP.SetFocus()
 	}
 }
 
@@ -362,6 +342,9 @@ func (ui *clientUI) update(update clientUIUpdate) error {
 				ui.loginStatus.SetTextColor(walk.RGB(178, 48, 48))
 				_ = ui.loginStatus.SetText(update.Message)
 			}
+		case "enrolling":
+			ui.loginStatus.SetTextColor(walk.RGB(90, 101, 120))
+			_ = ui.loginStatus.SetText(update.Message)
 		case "idle":
 			ui.showLogin()
 		case "error":

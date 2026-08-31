@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -15,6 +16,23 @@ import (
 )
 
 const testDeviceToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+func TestRunReturnsAuthenticationRejectionWithoutRetrying(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	application, err := New(Config{
+		ServerURL: "ws" + strings.TrimPrefix(server.URL, "http"), AgentToken: "rejected-token",
+		ClientID: "test-client", DeviceToken: testDeviceToken, OutputLimit: 1024,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := application.Run(context.Background()); !errors.Is(err, ErrAuthenticationRejected) {
+		t.Fatalf("Run() error = %v, want authentication rejection", err)
+	}
+}
 
 func TestRunStopsWhenContextIsCanceled(t *testing.T) {
 	helloReceived := make(chan protocol.Message, 1)

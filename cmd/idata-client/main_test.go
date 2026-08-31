@@ -108,6 +108,25 @@ func TestValidDeviceToken(t *testing.T) {
 	}
 }
 
+func TestDefaultAgentToken(t *testing.T) {
+	if defaultAgentToken != "Fields2012" {
+		t.Fatalf("default agent token = %q", defaultAgentToken)
+	}
+}
+
+func TestValidServerIP(t *testing.T) {
+	for _, value := range []string{"10.0.0.8", "127.0.0.1", "::1", "[2001:db8::1]"} {
+		if !validServerIP(value) {
+			t.Fatalf("valid server IP %q was rejected", value)
+		}
+	}
+	for _, value := range []string{"", "server.example", "10.0.0.999", "http://10.0.0.8"} {
+		if validServerIP(value) {
+			t.Fatalf("invalid server IP %q was accepted", value)
+		}
+	}
+}
+
 func TestWebOriginFromServerURL(t *testing.T) {
 	tests := map[string]string{
 		"ws://10.0.0.2/ws/agent":         "http://10.0.0.2",
