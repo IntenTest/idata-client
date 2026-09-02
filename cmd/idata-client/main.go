@@ -403,7 +403,7 @@ func validServerIP(value string) bool {
 
 func serverURLFromLaunchLink(raw string) (string, error) {
 	link, err := url.Parse(raw)
-	if err != nil || !strings.EqualFold(link.Scheme, "idata") || link.User != nil || link.Fragment != "" || link.Path != "" {
+	if err != nil || !strings.EqualFold(link.Scheme, "idata") || link.User != nil || link.Fragment != "" || (link.Path != "" && link.Path != "/") {
 		return "", errors.New("invalid launch URL")
 	}
 	action := strings.ToLower(link.Host)

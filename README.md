@@ -92,7 +92,9 @@ Enter。Client 使用同一个 Server 地址自动注册和连接，页面执行
 Client 每次正常启动都会在当前 Windows 用户的 `HKCU\Software\Classes\idata` 注册 URL
 协议；不需要管理员权限。设置 `IDATA_REGISTER_URL_PROTOCOL=false` 可禁止后续注册，执行
 `idata-client.exe --unregister-url-protocol` 可删除现有注册。移动或重命名 EXE 后需重新
-运行一次，以更新协议指向的新路径。
+运行一次，以更新协议指向的新路径。注册所需的 Windows 系统命令会隐藏运行，因此手动启动
+Client 时只显示一个主窗口。浏览器或 Windows 把链接规范化为 `idata://connect/?...` 时也可
+正常唤起，其他路径和额外参数仍会被拒绝。
 
 授权后页面会创建一个持续 Shell。连续输入 `cd`、`set` 等 shell 内建
 命令时状态会保留，stdout/stderr 会实时返回。页面关闭或连接断开时，客户端会结束该 Shell

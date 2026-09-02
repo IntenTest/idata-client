@@ -7,9 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 )
 
 const registryKey = `HKCU\Software\Classes\idata`
+
+const createNoWindow = 0x08000000
 
 func Register() error {
 	executable, err := os.Executable()
@@ -25,7 +28,7 @@ func Register() error {
 		{"add", registryKey + `\shell\open\command`, "/ve", "/d", command, "/f"},
 	}
 	for _, arguments := range commands {
-		if output, err := exec.Command("reg.exe", arguments...).CombinedOutput(); err != nil {
+		if output, err := runRegistryCommand(arguments...); err != nil {
 			return fmt.Errorf("register idata URL protocol: %w (%s)", err, strings.TrimSpace(string(output)))
 		}
 	}
@@ -33,9 +36,15 @@ func Register() error {
 }
 
 func Unregister() error {
-	output, err := exec.Command("reg.exe", "delete", registryKey, "/f").CombinedOutput()
+	output, err := runRegistryCommand("delete", registryKey, "/f")
 	if err != nil {
 		return fmt.Errorf("unregister idata URL protocol: %w (%s)", err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func runRegistryCommand(arguments ...string) ([]byte, error) {
+	command := exec.Command("reg.exe", arguments...)
+	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	return command.CombinedOutput()
 }

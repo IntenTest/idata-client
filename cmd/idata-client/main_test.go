@@ -132,8 +132,11 @@ func TestServerURLFromLaunchLink(t *testing.T) {
 		wantError bool
 	}{
 		{name: "legacy login", link: "idata://login"},
+		{name: "browser-normalized legacy login", link: "idata://login/"},
 		{name: "IPv4 connect", link: "idata://connect?server=192.168.8.87&port=12345", want: "ws://192.168.8.87:12345/ws/agent"},
+		{name: "browser-normalized connect", link: "idata://connect/?server=192.168.8.87&port=12345&secure=0", want: "ws://192.168.8.87:12345/ws/agent"},
 		{name: "secure IPv6 connect", link: "idata://connect?server=%3A%3A1&port=443&secure=1", want: "wss://[::1]:443/ws/agent"},
+		{name: "unexpected path rejected", link: "idata://connect/anything?server=192.168.8.87&port=12345", wantError: true},
 		{name: "hostname rejected", link: "idata://connect?server=example.com&port=443", wantError: true},
 		{name: "missing port rejected", link: "idata://connect?server=192.168.8.87", wantError: true},
 		{name: "token parameter rejected", link: "idata://connect?server=192.168.8.87&port=12345&token=secret", wantError: true},
