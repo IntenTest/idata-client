@@ -30,10 +30,11 @@ import (
 )
 
 const (
-	defaultAgentToken           = "Fields2012"
+	defaultAgentToken           = ""
 	defaultBrowserBridgeAddress = "127.0.0.1:17891"
 	specialServerIP             = "10.90.65.189"
 	specialServerPort           = "12345"
+	defaultServerURL            = "ws://10.90.65.189:12345/ws/agent"
 )
 
 func main() {
@@ -106,7 +107,7 @@ func run(logger *slog.Logger, logFile *os.File) error {
 	logCheckpoint(logger, logFile, "parsing startup options")
 	identity := readLocalDeviceIdentity()
 	hostname := identity.Hostname
-	serverURL := flag.String("server", envOr("IDATA_SERVER_URL", fileConfig.ServerURL), "WebSocket server URL")
+	serverURL := flag.String("server", envOr("IDATA_SERVER_URL", valueOr(fileConfig.ServerURL, defaultServerURL)), "WebSocket server URL")
 	clientID := flag.String("id", envOr("IDATA_CLIENT_ID", valueOr(fileConfig.ClientID, hostname)), "stable client ID")
 	outputLimit := flag.Int64("output-limit", envInt64("IDATA_OUTPUT_LIMIT", positiveOr(fileConfig.OutputLimit, 1<<20)), "maximum bytes captured per output stream")
 	allowInsecure := flag.Bool("allow-insecure", envBool("IDATA_ALLOW_INSECURE", boolOr(fileConfig.AllowInsecure, true)), "allow unencrypted ws:// outside localhost")
@@ -116,6 +117,18 @@ func run(logger *slog.Logger, logFile *os.File) error {
 	unregisterURLProtocol := flag.Bool("unregister-url-protocol", false, "remove the idata:// browser launcher for the current Windows user and exit")
 	browserLogin := flag.Bool("browser-login", false, "start from an idata:// browser login link")
 	flag.Parse()
+	if *browserLogin && len(flag.Args()) > 1 {
+		return errors.New("invalid idata launch link")
+	}
+	if *browserLogin && len(flag.Args()) == 1 {
+		launchServerURL, launchErr := serverURLFromLaunchLink(flag.Args()[0])
+		if launchErr != nil {
+			return errors.New("invalid idata launch link")
+		}
+		if launchServerURL != "" {
+			*serverURL = launchServerURL
+		}
+	}
 	logCheckpoint(logger, logFile, "startup options parsed", "browser_login", *browserLogin)
 	if *unregisterURLProtocol {
 		if runtime.GOOS != "windows" {
@@ -133,9 +146,6 @@ func run(logger *slog.Logger, logFile *os.File) error {
 	if *browserLogin && *browserBridgeAddress != "off" && localClientRunning(*browserBridgeAddress) {
 		return nil
 	}
-	if runtime.GOOS != "windows" {
-		return errors.New("idata-client desktop application only supports Windows")
-	}
 	logCheckpoint(logger, logFile, "preparing client window")
 
 	deviceToken := envOr("IDATA_DEVICE_TOKEN", fileConfig.DeviceToken)
@@ -150,7 +160,7 @@ func run(logger *slog.Logger, logFile *os.File) error {
 	serverIP, _ := serverEndpoint(*serverURL)
 	ui, err := startClientUI(clientUIInitial{
 		ServerIP: serverIP, Username: identity.Username, Hostname: identity.Hostname,
-		LocalIP: identity.LocalIP, MACAddress: identity.MACAddress, AutoConnect: *browserLogin,
+		LocalIP: identity.LocalIP, MACAddress: identity.MACAddress, AutoConnect: validServerIP(serverIP),
 	}, logger, logFile)
 	if err != nil {
 		return err
@@ -333,7 +343,7 @@ func run(logger *slog.Logger, logFile *os.File) error {
 				if err := saveFileConfig(fileConfig); err != nil {
 					logger.Warn("failed to remember enrollment server", "error", err)
 				}
-				_ = ui.update(clientUIUpdate{State: "enrolling", Message: "设备申请已发送，请等待管理员批准。"})
+				_ = ui.update(clientUIUpdate{State: "enrolling", Message: "设备申请已发送，正在等待服务器处理。"})
 			case "enrollment_approved":
 				agentToken = event.token
 				fileConfig.ServerURL = activeURL
@@ -389,6 +399,46 @@ func validDeviceToken(token string) bool {
 
 func validServerIP(value string) bool {
 	return net.ParseIP(strings.TrimSpace(strings.Trim(value, "[]"))) != nil
+}
+
+func serverURLFromLaunchLink(raw string) (string, error) {
+	link, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(link.Scheme, "idata") || link.User != nil || link.Fragment != "" || link.Path != "" {
+		return "", errors.New("invalid launch URL")
+	}
+	action := strings.ToLower(link.Host)
+	if action != "login" && action != "connect" {
+		return "", errors.New("unsupported launch action")
+	}
+	query, err := url.ParseQuery(link.RawQuery)
+	if err != nil {
+		return "", errors.New("invalid launch parameters")
+	}
+	for key, values := range query {
+		if (key != "server" && key != "port" && key != "secure") || len(values) != 1 {
+			return "", errors.New("unsupported launch parameter")
+		}
+	}
+	serverIP := strings.TrimSpace(strings.Trim(query.Get("server"), "[]"))
+	port := strings.TrimSpace(query.Get("port"))
+	if serverIP == "" && port == "" && action == "login" {
+		return "", nil
+	}
+	if !validServerIP(serverIP) {
+		return "", errors.New("invalid launch server")
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return "", errors.New("invalid launch port")
+	}
+	scheme := "ws"
+	secure := query.Get("secure")
+	if secure == "1" {
+		scheme = "wss"
+	} else if secure != "" && secure != "0" {
+		return "", errors.New("invalid launch transport")
+	}
+	return (&url.URL{Scheme: scheme, Host: net.JoinHostPort(serverIP, port), Path: "/ws/agent"}).String(), nil
 }
 
 func loadFileConfig() (clientFileConfig, error) {

@@ -109,8 +109,43 @@ func TestValidDeviceToken(t *testing.T) {
 }
 
 func TestDefaultAgentToken(t *testing.T) {
-	if defaultAgentToken != "Fields2012" {
+	if defaultAgentToken != "" {
 		t.Fatalf("default agent token = %q", defaultAgentToken)
+	}
+}
+
+func TestDefaultServerURL(t *testing.T) {
+	if defaultServerURL != "ws://10.90.65.189:12345/ws/agent" {
+		t.Fatalf("default server URL = %q", defaultServerURL)
+	}
+	host, port := serverEndpoint(defaultServerURL)
+	if host != specialServerIP || port != specialServerPort {
+		t.Fatalf("default server endpoint = %s:%s", host, port)
+	}
+}
+
+func TestServerURLFromLaunchLink(t *testing.T) {
+	tests := []struct {
+		name      string
+		link      string
+		want      string
+		wantError bool
+	}{
+		{name: "legacy login", link: "idata://login"},
+		{name: "IPv4 connect", link: "idata://connect?server=192.168.8.87&port=12345", want: "ws://192.168.8.87:12345/ws/agent"},
+		{name: "secure IPv6 connect", link: "idata://connect?server=%3A%3A1&port=443&secure=1", want: "wss://[::1]:443/ws/agent"},
+		{name: "hostname rejected", link: "idata://connect?server=example.com&port=443", wantError: true},
+		{name: "missing port rejected", link: "idata://connect?server=192.168.8.87", wantError: true},
+		{name: "token parameter rejected", link: "idata://connect?server=192.168.8.87&port=12345&token=secret", wantError: true},
+		{name: "arbitrary action rejected", link: "idata://run?server=192.168.8.87&port=12345", wantError: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := serverURLFromLaunchLink(test.link)
+			if got != test.want || (err != nil) != test.wantError {
+				t.Fatalf("serverURLFromLaunchLink() = %q, %v; want %q, error=%v", got, err, test.want, test.wantError)
+			}
+		})
 	}
 }
 

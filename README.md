@@ -1,6 +1,6 @@
 # idata-client
 
-Windows 桌面端 agent。它通过可见窗口主动建立出站 WebSocket；也可在数字 loopback 地址上
+Windows 桌面端及 macOS/Linux 命令行 agent。它通过可见窗口或前台终端主动建立出站 WebSocket；也可在数字 loopback 地址上
 提供可关闭的 Client Token 备用配对接口，不监听局域网地址。
 
 ## 构建
@@ -19,13 +19,26 @@ GOOS=windows GOARCH=amd64 go build -ldflags="-H=windowsgui" \
 ## 配置与启动
 
 程序会自动读取与可执行文件位于同一目录的 `idata-client.json`。这适合 Windows 双击
-启动场景；命令行参数优先于环境变量，环境变量优先于配置文件。示例见
+启动场景；命令行参数优先于环境变量，环境变量优先于配置文件。未配置时默认连接
+`ws://10.90.65.189:12345/ws/agent`。示例见
 `deploy/idata-client.json.example`。
+
+macOS 和 Linux 使用前台命令行模式，也会自动连接默认 Server；需要覆盖地址时可显式提供
+完整的 Server WebSocket URL。进程会显示连接、审批和重连状态，可随时按 `Ctrl+C` 退出，
+不会注册后台服务或开机启动：
+
+```bash
+IDATA_SERVER_URL='ws://127.0.0.1:12345/ws/agent' ./idata-client
+```
+
+首次连接会自动提交设备申请。Server 默认自动批准所有有效的原生 Client 请求，无需人工
+操作；若 Server 关闭自动批准才会等待管理员处理。设备专属凭据会以仅当前用户可读的权限保存在二进制同目录的
+`idata-client.json` 中。
 
 | 环境变量 | 必填 | 默认值 | 说明 |
 |---|---:|---|---|
-| `IDATA_SERVER_URL` | 否 | 无 | 为界面的服务器 IP 提供初始值；成功申请后自动更新 |
-| `IDATA_AGENT_TOKEN` | 否 | 客户端内置共享值 | 未配置设备专属凭据时使用内置兼容凭据；环境变量可覆盖 |
+| `IDATA_SERVER_URL` | 否 | `ws://10.90.65.189:12345/ws/agent` | Client 启动后自动连接的管理 Server；成功连接后自动记住 |
+| `IDATA_AGENT_TOKEN` | 否 | 无 | 仅用于旧版共享凭据兼容；新设备默认使用自动申请 |
 | `IDATA_CLIENT_ID` | 否 | 当前 hostname | 稳定且唯一的设备 ID |
 | `IDATA_DEVICE_TOKEN` | 否 | 自动生成 | 每台设备唯一的 Web 配对凭据，至少 32 字符 |
 | `IDATA_OUTPUT_LIMIT` | 否 | `1048576` | stdout 和 stderr 各自的最大字节数 |
@@ -42,30 +55,39 @@ $env:IDATA_CLIENT_ID = 'office-windows'
 .\idata-client-windows-amd64.exe
 ```
 
-双击 EXE 后会显示由 EXE 内部直接创建的原生 Windows 登录窗口，不依赖 PowerShell UI
-子进程。窗口只要求填写服务器 IP，并显示当前用户名、机器名、主要局域网 IPv4 和对应网卡
-MAC 地址。填写后点击
-“建立连接”；真正建立连接后，窗口切换到状态页，可“中断连接”返回登录页，或“最小化到
+双击 EXE 后会显示由 EXE 内部直接创建的原生 Windows 状态窗口，不依赖 PowerShell UI
+子进程。Server 地址默认填入 `10.90.65.189`，也可以在连接页修改；Client 启动后会立即按
+当前地址自动连接，无需点击按钮。要改用其他 Server，可先取消或中断连接，再编辑地址并重新
+连接。窗口同时显示当前用户名、机器名、主要局域网 IPv4
+和对应网卡 MAC 地址；真正建立连接后，窗口切换到状态页，可“中断连接”返回连接页，或“最小化到
 托盘”并继续在线。窗口右上角保留标准最小化和关闭按钮，托盘菜单可恢复窗口或退出。
 
-登录窗口输入 `10.90.65.189` 时，Client 会自动连接专用端口 `12345`；输入其他服务器 IP
-时仍默认连接端口 `80`。该专用映射会覆盖旧配置中为 `10.90.65.189` 保存的端口，升级后
-不需要手工清理此前保存的 `:80` 地址。
+默认 Server `10.90.65.189` 使用专用端口 `12345`。若通过配置或环境变量指定其他服务器 IP，
+仍默认使用端口 `80`。该专用映射会覆盖旧配置中为 `10.90.65.189` 保存的端口，升级后不需要
+手工清理此前保存的 `:80` 地址。
 
-Client 默认使用内置的 v0.5 共享 Agent Token 建立连接，Server 需要配置相同的
-`IDATA_AGENT_TOKEN`。环境变量或配置文件中的 Agent Token 优先于内置值。共享凭据被 Server
-拒绝时，Client 会自动转入设备申请流程；管理员在 Server 的 `/admin/` 控制台批准后，Server
-签发与 Client ID、Device Token 哈希绑定的专属凭据，Client 会自动保存。Client 首次启动仍会
+Client 默认直接进入设备申请流程。Server 开启自动批准时，会立即签发与 Client ID、Device
+Token 哈希绑定的专属凭据，Client 自动保存并连接；关闭时才等待管理员在 `/admin/` 控制台
+批准。显式配置 `IDATA_AGENT_TOKEN` 仍可兼容
+旧版共享凭据。Client 首次启动仍会
 自动生成并补存每台设备独立的 `device_token`，但登录界面不会显示它。
+若保存的凭据属于旧 Client ID 或已被 Server 撤销，Client 会自动清除失效凭据并重新注册，
+不会持续重试同一个永久无效的连接。
 
-连接 v0.5.0 或更新 Server 后，从 Windows PC 打开 Server 根地址：
+连接更新后的 Server 后，从 Windows PC 打开 Server 根地址：
 
 - “新用户下载 Client”会跳转到 idata-client 最新 GitHub Release。
-- “老用户免密登录”会打开 `idata://login`。Windows 可能先显示“是否打开 iData Client”
-  的系统提示；允许后，本 EXE 会启动。如果 Client 已经运行，新启动的唤起进程会检测本机
+- “启动 Client 并进入”会打开只包含当前页面 Server IP、端口和 HTTP/WSS 模式的
+  `idata://connect` 链接。Windows 可能先显示“是否打开 iData Client”的系统提示；允许后，
+  本 EXE 会启动并自动连接该 Server。链接不包含 token 或命令。如果 Client 已经运行，新启动的唤起进程会检测本机
   loopback 服务并立即退出，不会建立第二条 agent 连接。
 - Server 发现与浏览器直接来源 IP 相同的在线 Client 后完成免密登录，并列出该 IP 下的
   全部 Client，均可选择操作。
+
+macOS 用户在同一页面点击“macOS：复制启动命令”，将复制的命令粘贴到 Terminal 并按
+Enter。Client 使用同一个 Server 地址自动注册和连接，页面执行与 Windows 完全相同的轮询、
+同 IP 会话、设备选择及终端流程。若浏览器不允许自动写入剪贴板，页面会显示可手动复制的
+只读命令。
 
 Client 每次正常启动都会在当前 Windows 用户的 `HKCU\Software\Classes\idata` 注册 URL
 协议；不需要管理员权限。设置 `IDATA_REGISTER_URL_PROTOCOL=false` 可禁止后续注册，执行
@@ -105,10 +127,10 @@ EXE 同目录；如果该目录不可写，则保存在当前用户的本地应�
 ## 安全说明
 
 - 当前 `ws://` 端口 80 方案没有传输加密，只适合受信任内网。
-- client ID、本机 IP、MAC 地址都不是密钥；真正的认证凭据是管理员批准后签发的设备专属 token。
+- client ID、本机 IP、MAC 地址都不是密钥；真正的认证凭据是 Server 签发的设备专属 token。
 - 设备申请中的用户名、机器名、本机 IP 和 MAC 是 Client 自报信息，管理员还应核对 Server 看到的来源 IP。
-- 内置的共享 Agent Token 随客户端程序分发，不能视为秘密，只适合当前受信任内网的兼容部署；
-  更严格的部署应通过环境变量覆盖，并使用设备审批签发的专属凭据。
+- 共享 Agent Token 不能提供设备级隔离，只应用于旧版兼容；
+  更严格的部署应关闭自动批准并使用人工审批签发设备专属凭据。
 - 普通 Web 免密登录按 Server 看到的直接来源 IP 划分范围；共享 NAT、VPN 或代理出口下的
   用户会看到并能操作该出口下的全部 Client。这只适合小规模可信公司内网。
 - `idata://` 只负责启动 Client，不携带 agent token、device token 或浏览器 Cookie。

@@ -1,5 +1,5 @@
 {
-  "client_id": "office-windows",
+  "server_url": "ws://10.90.65.189:12345/ws/agent",
   "allow_insecure": true,
   "confirm_browser_pairing": false,
   "register_url_protocol": true

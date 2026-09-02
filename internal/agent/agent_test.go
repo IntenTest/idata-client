@@ -34,6 +34,35 @@ func TestRunReturnsAuthenticationRejectionWithoutRetrying(t *testing.T) {
 	}
 }
 
+func TestRunTreatsDeviceCredentialBindingCloseAsAuthenticationRejection(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		connection, err := upgrader.Upgrade(writer, request, nil)
+		if err != nil {
+			return
+		}
+		defer connection.Close()
+		var hello protocol.Message
+		if err := connection.ReadJSON(&hello); err != nil {
+			return
+		}
+		_ = connection.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(
+			websocket.ClosePolicyViolation, "device credential does not match this client",
+		), time.Now().Add(time.Second))
+	}))
+	defer server.Close()
+	application, err := New(Config{
+		ServerURL: "ws" + strings.TrimPrefix(server.URL, "http"), AgentToken: "stale-device-token",
+		ClientID: "renamed-client", DeviceToken: testDeviceToken, OutputLimit: 1024,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := application.Run(context.Background()); !errors.Is(err, ErrAuthenticationRejected) {
+		t.Fatalf("Run() error = %v, want authentication rejection", err)
+	}
+}
+
 func TestRunStopsWhenContextIsCanceled(t *testing.T) {
 	helloReceived := make(chan protocol.Message, 1)
 	connectionStates := make(chan bool, 2)

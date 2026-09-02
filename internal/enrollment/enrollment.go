@@ -71,22 +71,22 @@ func Request(ctx context.Context, serverURL string, identity Identity, pending f
 	if err != nil {
 		deadline = time.Now().Add(10 * time.Minute)
 	}
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
 	for {
+		token, done, err := poll(ctx, client, baseURL, started)
+		if err != nil {
+			return "", err
+		}
+		if done {
+			return token, nil
+		}
+		timer := time.NewTimer(2 * time.Second)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return "", ctx.Err()
-		case <-ticker.C:
+		case <-timer.C:
 			if time.Now().After(deadline) {
 				return "", errors.New("device approval request expired")
-			}
-			token, done, err := poll(ctx, client, baseURL, started)
-			if err != nil {
-				return "", err
-			}
-			if done {
-				return token, nil
 			}
 		}
 	}

@@ -22,7 +22,7 @@ import (
 	"idata-client/internal/terminal"
 )
 
-const Version = "0.6.0"
+const Version = "0.7.0"
 
 var ErrAuthenticationRejected = errors.New("agent authentication rejected")
 
@@ -187,6 +187,9 @@ func (a *Agent) connectAndServe(parent context.Context) error {
 		var message protocol.Message
 		if err := conn.ReadJSON(&message); err != nil {
 			cancel()
+			if isDeviceCredentialRejection(err) {
+				return fmt.Errorf("%w: %v", ErrAuthenticationRejected, err)
+			}
 			return err
 		}
 		if message.ProtocolVersion != protocol.Version {
@@ -268,6 +271,19 @@ func (a *Agent) connectAndServe(parent context.Context) error {
 				}
 			}
 		}(message)
+	}
+}
+
+func isDeviceCredentialRejection(err error) bool {
+	var closeError *websocket.CloseError
+	if !errors.As(err, &closeError) || closeError.Code != websocket.ClosePolicyViolation {
+		return false
+	}
+	switch closeError.Text {
+	case "device credential does not match this client", "device credential revoked":
+		return true
+	default:
+		return false
 	}
 }
 
