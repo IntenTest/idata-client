@@ -165,6 +165,28 @@ func TestValidServerIP(t *testing.T) {
 	}
 }
 
+func TestValidateLaunchServerURL(t *testing.T) {
+	for _, value := range []string{
+		"ws://192.168.8.87:12345/ws/agent",
+		"wss://[2001:db8::1]:443/ws/agent",
+	} {
+		if err := validateLaunchServerURL(value); err != nil {
+			t.Fatalf("valid launch URL %q was rejected: %v", value, err)
+		}
+	}
+	for _, value := range []string{
+		"ws://example.com:12345/ws/agent",
+		"ws://192.168.8.87/ws/agent",
+		"ws://192.168.8.87:12345/other",
+		"ws://192.168.8.87:12345/ws/agent?token=secret",
+		"http://192.168.8.87:12345/ws/agent",
+	} {
+		if err := validateLaunchServerURL(value); err == nil {
+			t.Fatalf("invalid launch URL %q was accepted", value)
+		}
+	}
+}
+
 func TestWebOriginFromServerURL(t *testing.T) {
 	tests := map[string]string{
 		"ws://10.0.0.2/ws/agent":         "http://10.0.0.2",

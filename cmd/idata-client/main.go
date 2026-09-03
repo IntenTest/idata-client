@@ -111,20 +111,22 @@ func run(logger *slog.Logger, logFile *os.File) error {
 	clientID := flag.String("id", envOr("IDATA_CLIENT_ID", valueOr(fileConfig.ClientID, hostname)), "stable client ID")
 	outputLimit := flag.Int64("output-limit", envInt64("IDATA_OUTPUT_LIMIT", positiveOr(fileConfig.OutputLimit, 1<<20)), "maximum bytes captured per output stream")
 	allowInsecure := flag.Bool("allow-insecure", envBool("IDATA_ALLOW_INSECURE", boolOr(fileConfig.AllowInsecure, true)), "allow unencrypted ws:// outside localhost")
-	browserBridgeAddress := flag.String("browser-bridge", envOr("IDATA_BROWSER_BRIDGE_ADDR", valueOr(fileConfig.BrowserBridgeAddress, defaultBrowserBridgeAddress)), "loopback browser pairing address, or off")
+	browserBridgeAddress := flag.String("browser-bridge", envOr("IDATA_BROWSER_BRIDGE_ADDR", valueOr(fileConfig.BrowserBridgeAddress, defaultBrowserBridgeAddress)), "loopback browser pairing and launcher handoff address, or off")
 	confirmBrowserPairing := flag.Bool("confirm-browser-pairing", envBool("IDATA_CONFIRM_BROWSER_PAIRING", boolOr(fileConfig.ConfirmBrowserPairing, false)), "show a legacy local confirmation window for v0.4 browser pairing requests")
 	registerURLProtocol := flag.Bool("register-url-protocol", envBool("IDATA_REGISTER_URL_PROTOCOL", boolOr(fileConfig.RegisterURLProtocol, true)), "register the idata:// browser launcher for the current Windows user")
 	unregisterURLProtocol := flag.Bool("unregister-url-protocol", false, "remove the idata:// browser launcher for the current Windows user and exit")
 	browserLogin := flag.Bool("browser-login", false, "start from an idata:// browser login link")
 	flag.Parse()
+	launchServerURL := ""
 	if *browserLogin && len(flag.Args()) > 1 {
 		return errors.New("invalid idata launch link")
 	}
 	if *browserLogin && len(flag.Args()) == 1 {
-		launchServerURL, launchErr := serverURLFromLaunchLink(flag.Args()[0])
+		parsedLaunchURL, launchErr := serverURLFromLaunchLink(flag.Args()[0])
 		if launchErr != nil {
 			return errors.New("invalid idata launch link")
 		}
+		launchServerURL = parsedLaunchURL
 		if launchServerURL != "" {
 			*serverURL = launchServerURL
 		}
@@ -144,6 +146,11 @@ func run(logger *slog.Logger, logFile *os.File) error {
 		logCheckpoint(logger, logFile, "Windows URL protocol registered")
 	}
 	if *browserLogin && *browserBridgeAddress != "off" && localClientRunning(*browserBridgeAddress) {
+		if launchServerURL != "" {
+			if err := browserbridge.ForwardLaunch(*browserBridgeAddress, launchServerURL); err != nil {
+				logger.Warn("running client did not accept launch endpoint", "error", err)
+			}
+		}
 		return nil
 	}
 	logCheckpoint(logger, logFile, "preparing client window")
@@ -178,6 +185,7 @@ func run(logger *slog.Logger, logFile *os.File) error {
 		token      string
 	}
 	events := make(chan connectionEvent, 16)
+	launchRequests := make(chan string, 1)
 	var cancelConnection context.CancelFunc
 	var activeConnectionContext context.Context
 	generation := 0
@@ -275,7 +283,20 @@ func run(logger *slog.Logger, logFile *os.File) error {
 		cancelConnection = cancel
 		activeConnectionContext = connectionCtx
 		if *browserBridgeAddress != "off" {
-			startBrowserBridge(connectionCtx, candidate, *browserBridgeAddress, *clientID, deviceToken, logger)
+			startBrowserBridge(connectionCtx, candidate, *browserBridgeAddress, *clientID, deviceToken, func(launchURL string) error {
+				if err := validateLaunchServerURL(launchURL); err != nil {
+					return err
+				}
+				if err := validateServerURL(launchURL, *allowInsecure); err != nil {
+					return err
+				}
+				select {
+				case launchRequests <- launchURL:
+					return nil
+				default:
+					return errors.New("another launch is already pending")
+				}
+			}, logger)
 		}
 		if agentToken == "" {
 			startEnrollment(connectionCtx, currentGeneration, candidate)
@@ -324,6 +345,11 @@ func run(logger *slog.Logger, logFile *os.File) error {
 				stopConnection()
 				return nil
 			}
+		case launchURL := <-launchRequests:
+			*serverURL = launchURL
+			launchIP, _ := serverEndpoint(launchURL)
+			logger.Info("switching to server from browser launch", "server_ip", launchIP)
+			startConnection(clientUIAction{Action: "connect", ServerIP: launchIP})
 		case event := <-events:
 			if event.generation != generation {
 				continue
@@ -439,6 +465,19 @@ func serverURLFromLaunchLink(raw string) (string, error) {
 		return "", errors.New("invalid launch transport")
 	}
 	return (&url.URL{Scheme: scheme, Host: net.JoinHostPort(serverIP, port), Path: "/ws/agent"}).String(), nil
+}
+
+func validateLaunchServerURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.Scheme != "ws" && parsed.Scheme != "wss") || parsed.User != nil || parsed.Host == "" ||
+		parsed.Path != "/ws/agent" || parsed.RawQuery != "" || parsed.Fragment != "" || !validServerIP(parsed.Hostname()) {
+		return errors.New("invalid launch server URL")
+	}
+	portNumber, err := strconv.Atoi(parsed.Port())
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return errors.New("invalid launch server port")
+	}
+	return nil
 }
 
 func loadFileConfig() (clientFileConfig, error) {
@@ -578,22 +617,36 @@ func serverURLFromEndpoint(host, port, previousURL string) (string, error) {
 	return (&url.URL{Scheme: scheme, Host: net.JoinHostPort(host, port), Path: "/ws/agent"}).String(), nil
 }
 
-func startBrowserBridge(ctx context.Context, serverURL, address, clientID, deviceToken string, logger *slog.Logger) {
+func startBrowserBridge(ctx context.Context, serverURL, address, clientID, deviceToken string, launch func(string) error, logger *slog.Logger) {
 	webOrigin, err := webOriginFromServerURL(serverURL)
 	if err != nil {
 		logger.Warn("browser pairing bridge disabled", "error", err)
 		return
 	}
 	bridge, err := browserbridge.New(browserbridge.Config{
-		Address: address, AllowedOrigin: webOrigin, ClientID: clientID, DeviceToken: deviceToken,
+		Address: address, AllowedOrigin: webOrigin, ClientID: clientID, DeviceToken: deviceToken, Launch: launch,
 	})
 	if err != nil {
 		logger.Warn("browser pairing bridge disabled", "error", err)
 		return
 	}
 	go func() {
-		if err := bridge.Run(ctx); err != nil && ctx.Err() == nil {
-			logger.Warn("browser pairing bridge stopped", "error", err)
+		for attempt := 0; attempt < 20 && ctx.Err() == nil; attempt++ {
+			err := bridge.Run(ctx)
+			if err == nil || ctx.Err() != nil {
+				return
+			}
+			if attempt == 19 {
+				logger.Warn("browser pairing bridge stopped", "error", err)
+				return
+			}
+			timer := time.NewTimer(100 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
 		}
 	}()
 	logger.Info("browser pairing enabled", "address", address, "origin", webOrigin)

@@ -43,7 +43,7 @@ IDATA_SERVER_URL='ws://127.0.0.1:12345/ws/agent' ./idata-client
 | `IDATA_DEVICE_TOKEN` | 否 | 自动生成 | 每台设备唯一的 Web 配对凭据，至少 32 字符 |
 | `IDATA_OUTPUT_LIMIT` | 否 | `1048576` | stdout 和 stderr 各自的最大字节数 |
 | `IDATA_ALLOW_INSECURE` | 否 | `true` | 是否允许对非本机地址使用明文 `ws://` |
-| `IDATA_BROWSER_BRIDGE_ADDR` | 否 | `127.0.0.1:17891` | 浏览器配对回环地址；设为 `off` 可关闭 |
+| `IDATA_BROWSER_BRIDGE_ADDR` | 否 | `127.0.0.1:17891` | 浏览器配对和已运行 Client 启动参数交接的回环地址；设为 `off` 可关闭 |
 | `IDATA_CONFIRM_BROWSER_PAIRING` | 否 | `false` | 是否兼容 v0.4 的 Windows 本机确认请求 |
 | `IDATA_REGISTER_URL_PROTOCOL` | 否 | `true` | 当前 Windows 用户注册 `idata://` 免密登录唤起协议 |
 
@@ -79,8 +79,9 @@ Token 哈希绑定的专属凭据，Client 自动保存并连接；关闭时才�
 - “新用户下载 Client”会跳转到 idata-client 最新 GitHub Release。
 - “启动 Client 并进入”会打开只包含当前页面 Server IP、端口和 HTTP/WSS 模式的
   `idata://connect` 链接。Windows 可能先显示“是否打开 iData Client”的系统提示；允许后，
-  本 EXE 会启动并自动连接该 Server。链接不包含 token 或命令。如果 Client 已经运行，新启动的唤起进程会检测本机
-  loopback 服务并立即退出，不会建立第二条 agent 连接。
+  本 EXE 会启动并自动连接该 Server。链接不包含 token 或命令。如果 Client 已经运行，新启动的唤起进程会通过
+  loopback 接口把经过校验的 Server 地址交给现有 Client；现有 Client 会切换到链接指定的
+  IP、端口和 WS/WSS 模式，新进程随后退出，不会建立第二条 agent 连接。
 - Server 发现与浏览器直接来源 IP 相同的在线 Client 后完成免密登录，并列出该 IP 下的
   全部 Client，均可选择操作。
 
@@ -136,6 +137,8 @@ EXE 同目录；如果该目录不可写，则保存在当前用户的本地应�
 - 普通 Web 免密登录按 Server 看到的直接来源 IP 划分范围；共享 NAT、VPN 或代理出口下的
   用户会看到并能操作该出口下的全部 Client。这只适合小规模可信公司内网。
 - `idata://` 只负责启动 Client，不携带 agent token、device token 或浏览器 Cookie。
+- 已运行 Client 的启动参数交接只接受本机 loopback 上不带浏览器 `Origin` 的原生请求，并在
+  切换前再次校验数字 IP、端口、WS/WSS 模式和固定 `/ws/agent` 路径。
 - 浏览器配对 HTTP 接口只绑定 `127.0.0.1`，只允许配置的 Server Origin 读取，并可关闭。
 - `device_token` 是可控制本机终端的 Bearer 凭据；不要在不同 Client 之间复用或对外发送。
 - `idata-client.json` 中的 token 是明文凭据，应限制该文件仅授权管理员和运行账户可读，
