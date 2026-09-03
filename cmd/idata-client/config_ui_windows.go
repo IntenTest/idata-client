@@ -40,8 +40,8 @@ type clientUIUpdate struct {
 
 type clientUI struct {
 	mainWindow       *walk.MainWindow
-	loginPanel       *walk.Composite
-	connectedPanel   *walk.Composite
+	loginPanel       *walk.ScrollView
+	connectedPanel   *walk.ScrollView
 	serverIP         *walk.LineEdit
 	loginStatus      *walk.Label
 	connectButton    *walk.PushButton
@@ -114,34 +114,32 @@ func (ui *clientUI) createWindow(initial clientUIInitial) error {
 	dark := walk.RGB(45, 55, 72)
 	muted := walk.RGB(90, 101, 120)
 	background := SolidColorBrush{Color: walk.RGB(246, 248, 252)}
-	width, height := 450, 600
-	x := (int(win.GetSystemMetrics(win.SM_CXSCREEN)) - width) / 2
-	y := (int(win.GetSystemMetrics(win.SM_CYSCREEN)) - height) / 2
 
 	window := MainWindow{
-		AssignTo: &ui.mainWindow,
-		Title:    "iData Client",
-		Bounds:   Rectangle{X: x, Y: y, Width: width, Height: height},
-		MinSize:  Size{Width: width, Height: height},
-		MaxSize:  Size{Width: width, Height: height},
-		Font:     Font{Family: "Microsoft YaHei UI", PointSize: 9},
-		Layout:   VBox{MarginsZero: true, SpacingZero: true},
+		AssignTo:        &ui.mainWindow,
+		Title:           "iData Client",
+		Size:            Size{Width: 480, Height: 600},
+		MinSize:         Size{Width: 360, Height: 360},
+		Font:            Font{Family: "Microsoft YaHei UI", PointSize: 9},
+		Background:      background,
+		DoubleBuffering: true,
+		Layout:          VBox{MarginsZero: true, SpacingZero: true},
 		Children: []Widget{
 			Composite{
 				Background: SolidColorBrush{Color: blue},
-				MinSize:    Size{Height: 112}, MaxSize: Size{Height: 112},
-				Layout: VBox{Margins: Margins{Left: 24, Top: 18, Right: 24, Bottom: 14}, Spacing: 2,
+				MinSize:    Size{Height: 104}, MaxSize: Size{Height: 104},
+				Layout: VBox{Margins: Margins{Left: 24, Top: 14, Right: 24, Bottom: 12}, Spacing: 0,
 					Alignment: AlignHCenterVCenter},
 				Children: []Widget{
 					Label{Text: "iD", Font: Font{Family: "Segoe UI", PointSize: 25, Bold: true},
-						TextColor: walk.RGB(255, 255, 255), TextAlignment: AlignCenter, MinSize: Size{Height: 58}},
+						TextColor: walk.RGB(255, 255, 255), TextAlignment: AlignCenter, MinSize: Size{Height: 54}},
 					Label{Text: "iData Client", Font: Font{Family: "Microsoft YaHei UI", PointSize: 12, Bold: true},
-						TextColor: walk.RGB(255, 255, 255), TextAlignment: AlignCenter, MinSize: Size{Height: 28}},
+						TextColor: walk.RGB(255, 255, 255), TextAlignment: AlignCenter, MinSize: Size{Height: 26}},
 				},
 			},
-			Composite{
+			ScrollView{
 				AssignTo: &ui.loginPanel, Background: background,
-				Layout: VBox{Margins: Margins{Left: 46, Top: 24, Right: 46, Bottom: 24}, Spacing: 7},
+				Layout: VBox{Margins: Margins{Left: 40, Top: 22, Right: 40, Bottom: 22}, Spacing: 7},
 				Children: []Widget{
 					Label{Text: "连接到管理服务器", Font: Font{Family: "Microsoft YaHei UI", PointSize: 11, Bold: true},
 						TextColor: dark, MinSize: Size{Height: 30}},
@@ -160,7 +158,7 @@ func (ui *clientUI) createWindow(initial clientUIInitial) error {
 					VSpacer{},
 				},
 			},
-			Composite{
+			ScrollView{
 				AssignTo: &ui.connectedPanel, Background: background, Visible: false,
 				Layout: VBox{Margins: Margins{Left: 46, Top: 30, Right: 46, Bottom: 28}, Spacing: 10,
 					Alignment: AlignHCenterVCenter},
@@ -186,9 +184,7 @@ func (ui *clientUI) createWindow(initial clientUIInitial) error {
 		return fmt.Errorf("create native Windows client window: %w", err)
 	}
 
-	style := uint32(win.GetWindowLong(ui.mainWindow.Handle(), win.GWL_STYLE))
-	style &^= win.WS_MAXIMIZEBOX | win.WS_THICKFRAME
-	win.SetWindowLong(ui.mainWindow.Handle(), win.GWL_STYLE, int32(style))
+	fitAndCenterWindowOnCurrentDisplay(ui.mainWindow)
 	_ = ui.mainWindow.SetIcon(walk.IconApplication())
 	ui.mainWindow.Closing().Attach(func(_ *bool, _ walk.CloseReason) {
 		ui.emit(clientUIAction{Action: "quit"})
@@ -227,6 +223,30 @@ func (ui *clientUI) createWindow(initial clientUIInitial) error {
 	}
 	ui.showWindow()
 	return nil
+}
+
+func fitAndCenterWindowOnCurrentDisplay(window *walk.MainWindow) {
+	var monitorInfo win.MONITORINFO
+	monitorInfo.CbSize = uint32(unsafe.Sizeof(monitorInfo))
+	monitor := win.MonitorFromWindow(window.Handle(), win.MONITOR_DEFAULTTONEAREST)
+	if monitor == 0 || !win.GetMonitorInfo(monitor, &monitorInfo) {
+		return
+	}
+
+	workArea := monitorInfo.RcWork
+	size := window.SizePixels()
+	margin := window.IntFrom96DPI(16)
+	maxWidth := int(workArea.Right-workArea.Left) - margin*2
+	maxHeight := int(workArea.Bottom-workArea.Top) - margin*2
+	if size.Width > maxWidth {
+		size.Width = maxWidth
+	}
+	if size.Height > maxHeight {
+		size.Height = maxHeight
+	}
+	x := int(workArea.Left) + (int(workArea.Right-workArea.Left)-size.Width)/2
+	y := int(workArea.Top) + (int(workArea.Bottom-workArea.Top)-size.Height)/2
+	_ = window.SetBoundsPixels(walk.Rectangle{X: x, Y: y, Width: size.Width, Height: size.Height})
 }
 
 func initializeWindowsControls() error {
@@ -295,6 +315,7 @@ func (ui *clientUI) showLogin() {
 	_ = ui.connectButton.SetText("建立连接")
 	ui.loginStatus.SetTextColor(walk.RGB(178, 48, 48))
 	_ = ui.loginStatus.SetText("")
+	ui.mainWindow.RequestLayout()
 	_ = ui.serverIP.SetFocus()
 }
 
@@ -305,6 +326,7 @@ func (ui *clientUI) showConnected(update clientUIUpdate) {
 	_ = ui.connectedAddress.SetText(update.ServerIP + ":" + update.ServerPort)
 	ui.connectedStatus.SetTextColor(walk.RGB(34, 145, 88))
 	_ = ui.connectedStatus.SetText("连接正常，客户端保持在线")
+	ui.mainWindow.RequestLayout()
 }
 
 func (ui *clientUI) hideToTray() {
